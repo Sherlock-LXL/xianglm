@@ -1,0 +1,5 @@
+modelscope-hub
+numpy
+pyarrow
+tokenizers
+torch

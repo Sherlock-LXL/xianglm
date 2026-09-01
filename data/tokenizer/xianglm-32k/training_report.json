@@ -1,0 +1,99 @@
+{
+  "created_at": "2026-08-22T14:22:38.950688+08:00",
+  "tokenizer_type": "Byte-level BPE",
+  "vocab_size_requested": 32768,
+  "vocab_size_actual": 32768,
+  "sample_target_bytes": 134217728,
+  "source_weights": {
+    "chinese_web": 0.6,
+    "chinese_education": 0.25,
+    "english_education": 0.1,
+    "code": 0.05
+  },
+  "sampling_stats": {
+    "chinese_web": {
+      "source": "chinese_web",
+      "target_bytes": 80530636,
+      "accepted_bytes": 80531828,
+      "accepted_documents": 18613
+    },
+    "chinese_education": {
+      "source": "chinese_education",
+      "target_bytes": 33554432,
+      "accepted_bytes": 33570118,
+      "accepted_documents": 5690
+    },
+    "english_education": {
+      "source": "english_education",
+      "target_bytes": 13421772,
+      "accepted_bytes": 13422395,
+      "accepted_documents": 2852
+    },
+    "code": {
+      "source": "code",
+      "target_bytes": 6710888,
+      "accepted_bytes": 6713476,
+      "accepted_documents": 1021
+    }
+  },
+  "special_token_ids": {
+    "<|pad|>": 0,
+    "<|unk|>": 1,
+    "<|bos|>": 2,
+    "<|eos|>": 3,
+    "<|endoftext|>": 4,
+    "<|im_start|>": 5,
+    "<|im_end|>": 6
+  },
+  "configuration": {
+    "random_seed": 20260822,
+    "max_document_chars": 50000,
+    "batch_documents": 256,
+    "min_frequency": 2,
+    "max_token_length": 32,
+    "add_prefix_space": false,
+    "unicode_normalizer": null
+  },
+  "evaluation": {
+    "chinese_web": {
+      "documents": 100,
+      "characters": 110189,
+      "utf8_bytes": 297186,
+      "tokens": 71739,
+      "characters_per_token": 1.5359706714618269,
+      "bytes_per_token": 4.142600259273198,
+      "unknown_tokens": 0,
+      "roundtrip_failures": 0
+    },
+    "chinese_education": {
+      "documents": 100,
+      "characters": 242976,
+      "utf8_bytes": 689735,
+      "tokens": 150500,
+      "characters_per_token": 1.6144584717607973,
+      "bytes_per_token": 4.582956810631229,
+      "unknown_tokens": 0,
+      "roundtrip_failures": 0
+    },
+    "english_education": {
+      "documents": 100,
+      "characters": 466108,
+      "utf8_bytes": 468193,
+      "tokens": 124065,
+      "characters_per_token": 3.756966106476444,
+      "bytes_per_token": 3.773771813162455,
+      "unknown_tokens": 0,
+      "roundtrip_failures": 0
+    },
+    "code": {
+      "documents": 100,
+      "characters": 443247,
+      "utf8_bytes": 444025,
+      "tokens": 149798,
+      "characters_per_token": 2.9589647391820986,
+      "bytes_per_token": 2.964158399978638,
+      "unknown_tokens": 0,
+      "roundtrip_failures": 0
+    }
+  }
+}

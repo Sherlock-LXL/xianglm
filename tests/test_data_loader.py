@@ -8,6 +8,7 @@ from src.config import SOURCE_WEIGHTS
 from src.data_loader import MixedPretrainingLoader
 from tests.support import create_tokenized_fixture
 
+
 class MixedPretrainingLoaderTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -19,7 +20,13 @@ class MixedPretrainingLoaderTest(unittest.TestCase):
         cls.data_directory.cleanup()
 
     def setUp(self) -> None:
-        self.loader = MixedPretrainingLoader(data_config=self.data_config, context_length=32, split=self.data_config.train_split, seed=1234, max_open_files=4)
+        self.loader = MixedPretrainingLoader(
+            data_config=self.data_config,
+            context_length=32,
+            split=self.data_config.train_split,
+            seed=1234,
+            max_open_files=4,
+        )
 
     def tearDown(self) -> None:
         self.loader.close()
@@ -45,13 +52,16 @@ class MixedPretrainingLoaderTest(unittest.TestCase):
         counts = {name: 0 for name, _ in self.data_config.source_weights}
         for _ in range(100):
             batch = self.loader.next_batch(16)
-            for name, count in (batch.source_counts.items()):
+            for name, count in batch.source_counts.items():
                 counts[name] += count
         total = sum(counts.values())
         expected = self.data_config.source_weight_dict
         for name, target in expected.items():
             observed = counts[name] / total
-            self.assertLess(abs(observed - target), 0.06, msg=(f"{name}: observed={observed}, target={target}"))
+            self.assertLess(
+                abs(observed - target), 0.06, msg=(f"{name}: observed={observed}, target={target}")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

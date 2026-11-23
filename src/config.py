@@ -15,7 +15,13 @@ SFT_BEST_CHECKPOINT_PATH: Final = CHECKPOINT_ROOT / "best_sft.pt"
 SFT_LATEST_CHECKPOINT_PATH: Final = CHECKPOINT_ROOT / "latest_sft.pt"
 LOG_ROOT: Final = PROJECT_ROOT / "data" / "logs"
 
-SOURCE_WEIGHTS: Final = (("chinese_web", 0.60), ("chinese_education", 0.25), ("english_education", 0.10), ("code", 0.05))
+SOURCE_WEIGHTS: Final = (
+    ("chinese_web", 0.60),
+    ("chinese_education", 0.25),
+    ("english_education", 0.10),
+    ("code", 0.05),
+)
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -62,6 +68,7 @@ class ModelConfig:
             raise ValueError("rms_norm_eps 必须为正数")
         if self.rope_theta <= 0:
             raise ValueError("rope_theta 必须为正数")
+
 
 @dataclass(frozen=True)
 class TrainConfig:
@@ -124,6 +131,7 @@ class TrainConfig:
         if self.global_batch_tokens(model) <= 0:
             raise ValueError("global_batch_tokens 必须为正数")
 
+
 @dataclass(frozen=True)
 class DataConfig:
     manifest_path: Path
@@ -152,6 +160,7 @@ class DataConfig:
         if abs(total_weight - 1.0) > 1e-9:
             raise ValueError(f"source_weights 之和必须为 1，当前为 {total_weight}")
 
+
 @dataclass(frozen=True)
 class ExperimentConfig:
     name: str
@@ -171,17 +180,28 @@ class ExperimentConfig:
         self.train.validate(self.model)
         self.data.validate(require_manifest=require_data_manifest)
 
+
 def estimate_parameter_count(config: ModelConfig) -> int:
     embedding_parameters = config.vocab_size * config.d_model
     attention_parameters_per_layer = 4 * config.d_model * config.d_model
     swiglu_parameters_per_layer = 3 * config.d_model * config.d_ff
     norm_parameters_per_layer = 2 * config.d_model
-    block_parameters = config.n_layers * (attention_parameters_per_layer + swiglu_parameters_per_layer + norm_parameters_per_layer)
+    block_parameters = config.n_layers * (
+        attention_parameters_per_layer + swiglu_parameters_per_layer + norm_parameters_per_layer
+    )
     final_norm_parameters = config.d_model
     lm_head_parameters = 0 if config.tie_embeddings else config.vocab_size * config.d_model
     return embedding_parameters + block_parameters + final_norm_parameters + lm_head_parameters
 
-COMMON_DATA_CONFIG = DataConfig(manifest_path=DATA_MANIFEST_PATH, source_weights=SOURCE_WEIGHTS, train_split="train", validation_split="validation", pin_memory=True, seed=42)
+
+COMMON_DATA_CONFIG = DataConfig(
+    manifest_path=DATA_MANIFEST_PATH,
+    source_weights=SOURCE_WEIGHTS,
+    train_split="train",
+    validation_split="validation",
+    pin_memory=True,
+    seed=42,
+)
 
 LOCAL_200M = ExperimentConfig(
     name="local_200m",
@@ -222,9 +242,11 @@ LOCAL_200M = ExperimentConfig(
     data=COMMON_DATA_CONFIG,
 )
 
+
 def get_experiment_config(require_data_manifest: bool = True) -> ExperimentConfig:
     LOCAL_200M.validate(require_data_manifest=require_data_manifest)
     return LOCAL_200M
+
 
 def print_config_summary(config: ExperimentConfig) -> None:
     parameter_count = estimate_parameter_count(config.model)
@@ -258,9 +280,11 @@ def print_config_summary(config: ExperimentConfig) -> None:
         print(f"- {source}: {weight:.0%}")
     print()
 
+
 def main() -> None:
     config = get_experiment_config()
     print_config_summary(config)
+
 
 if __name__ == "__main__":
     main()

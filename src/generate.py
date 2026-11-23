@@ -10,6 +10,7 @@ from src.config import TOKENIZER_PATH, get_experiment_config
 from src.evaluate import autocast_context, resolve_checkpoint_path
 from src.model import TransformerLM
 
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -17,7 +18,10 @@ def set_seed(seed: int) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def apply_repetition_penalty(logits: torch.Tensor, token_ids: list[int], penalty: float) -> torch.Tensor:
+
+def apply_repetition_penalty(
+    logits: torch.Tensor, token_ids: list[int], penalty: float
+) -> torch.Tensor:
     if penalty == 1.0:
         return logits
     adjusted = logits.clone()
@@ -28,6 +32,7 @@ def apply_repetition_penalty(logits: torch.Tensor, token_ids: list[int], penalty
         else:
             adjusted[token_id] = score / penalty
     return adjusted
+
 
 def sample_next_token(logits: torch.Tensor, *, temperature: float, top_k: int, top_p: float) -> int:
     if temperature == 0.0:
@@ -51,6 +56,7 @@ def sample_next_token(logits: torch.Tensor, *, temperature: float, top_k: int, t
     probabilities = torch.softmax(logits, dim=-1)
     return int(torch.multinomial(probabilities, num_samples=1).item())
 
+
 @torch.no_grad()
 def generate_tokens(
     *,
@@ -70,17 +76,20 @@ def generate_tokens(
         raise ValueError("prompt编码后不能为空")
     model.eval()
     for _ in range(max_new_tokens):
-        context_ids = generated[-model.config.context_length:]
+        context_ids = generated[-model.config.context_length :]
         input_ids = torch.tensor([context_ids], dtype=torch.long, device=device)
         with autocast_context(device, precision):
             output = model(input_ids=input_ids)
         next_logits = output.logits[0, -1].float()
         next_logits = apply_repetition_penalty(next_logits, generated, repetition_penalty)
-        next_token = sample_next_token(next_logits, temperature=temperature, top_k=top_k, top_p=top_p)
+        next_token = sample_next_token(
+            next_logits, temperature=temperature, top_k=top_k, top_p=top_p
+        )
         if next_token in stop_token_ids:
             break
         generated.append(next_token)
     return generated
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用XiangLM checkpoint生成文本")
@@ -92,8 +101,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--repetition-penalty", type=float, default=1.05)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     return parser.parse_args()
+
 
 def validate_args(args: argparse.Namespace) -> None:
     if args.max_new_tokens <= 0:
@@ -106,6 +118,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--top-p必须位于(0, 1]")
     if args.repetition_penalty < 1.0:
         raise ValueError("--repetition-penalty不能小于1")
+
 
 def main() -> None:
     args = parse_args()
@@ -122,8 +135,17 @@ def main() -> None:
             raise RuntimeError("空prompt且tokenizer没有BOS")
         prompt_ids = [bos_id]
     model = TransformerLM(experiment.model, gradient_checkpointing=False).to(device)
-    checkpoint = load_model_checkpoint(path=checkpoint_path, model=model, expected_experiment_name=experiment.name, map_location=device)
-    stop_ids = {token_id for token_id in (tokenizer.token_to_id("<|endoftext|>"), tokenizer.token_to_id("<|eos|>")) if token_id is not None}
+    checkpoint = load_model_checkpoint(
+        path=checkpoint_path,
+        model=model,
+        expected_experiment_name=experiment.name,
+        map_location=device,
+    )
+    stop_ids = {
+        token_id
+        for token_id in (tokenizer.token_to_id("<|endoftext|>"), tokenizer.token_to_id("<|eos|>"))
+        if token_id is not None
+    }
     generated_ids = generate_tokens(
         model=model,
         prompt_ids=prompt_ids,
@@ -143,6 +165,7 @@ def main() -> None:
     print(f"已训练tokens：{int(checkpoint['tokens_processed']):,}")
     print("=" * 72)
     print(text)
+
 
 if __name__ == "__main__":
     main()

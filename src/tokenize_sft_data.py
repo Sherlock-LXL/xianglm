@@ -29,8 +29,17 @@ MIN_FREE_DISK_BYTES = 10 * 1024**3
 TOKEN_DTYPE = np.dtype("<u2")
 MASK_DTYPE = np.dtype("u1")
 LENGTH_DTYPE = np.dtype("<u2")
-SPECIAL_TOKEN_STRINGS = ("<|pad|>", "<|unk|>", "<|bos|>", "<|eos|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>")
+SPECIAL_TOKEN_STRINGS = (
+    "<|pad|>",
+    "<|unk|>",
+    "<|bos|>",
+    "<|eos|>",
+    "<|endoftext|>",
+    "<|im_start|>",
+    "<|im_end|>",
+)
 SPLITS = ("train", "validation", "test")
+
 
 @dataclass
 class EncodedRecord:
@@ -43,8 +52,10 @@ class EncodedRecord:
     truncated: bool
     dropped_turns: int
 
+
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat()
+
 
 def format_bytes(value: int) -> str:
     units = ("B", "KiB", "MiB", "GiB", "TiB")
@@ -54,6 +65,7 @@ def format_bytes(value: int) -> str:
             return f"{size:.2f} {unit}"
         size /= 1024
     return f"{size:.2f} TiB"
+
 
 def sha256_file(path: Path, chunk_size: int = 16 * 1024**2) -> str:
     digest = sha256()
@@ -65,23 +77,32 @@ def sha256_file(path: Path, chunk_size: int = 16 * 1024**2) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
 def sha256_json(value: Any) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return sha256(payload).hexdigest()
+
 
 def atomic_write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_suffix(path.suffix + ".tmp")
-    temporary_path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary_path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     os.replace(temporary_path, path)
+
 
 def relative_to_output(path: Path) -> str:
     return path.resolve().relative_to(OUTPUT_ROOT.resolve()).as_posix()
+
 
 def ensure_free_disk_space() -> None:
     free_bytes = shutil.disk_usage(OUTPUT_ROOT).free
     if free_bytes < MIN_FREE_DISK_BYTES:
         raise RuntimeError(f"磁盘剩余空间低于安全线：{format_bytes(free_bytes)}")
+
 
 def load_tokenizers() -> tuple[Tokenizer, Tokenizer, dict[str, int]]:
     if not TOKENIZER_PATH.exists():
@@ -108,12 +129,14 @@ def load_tokenizers() -> tuple[Tokenizer, Tokenizer, dict[str, int]]:
         raise RuntimeError("正文 tokenizer 回译失败")
     return control_tokenizer, raw_tokenizer, special_token_ids
 
+
 def encode_text(raw_tokenizer: Tokenizer, text: str, reserved_ids: set[int]) -> list[int]:
     token_ids = raw_tokenizer.encode(text, add_special_tokens=False).ids
     accidental = reserved_ids.intersection(token_ids)
     if accidental:
         raise RuntimeError(f"正文中产生保留 token ID：{sorted(accidental)}")
     return token_ids
+
 
 def truncate_middle(token_ids: list[int], budget: int, separator_ids: list[int]) -> list[int]:
     if len(token_ids) <= budget:
@@ -125,21 +148,35 @@ def truncate_middle(token_ids: list[int], budget: int, separator_ids: list[int])
     tail = remaining - head
     return token_ids[:head] + separator_ids + token_ids[-tail:]
 
-def encode_messages(messages: list[dict[str, str]], raw_tokenizer: Tokenizer, special_ids: dict[str, int], reserved_ids: set[int]) -> tuple[list[int], list[int]]:
+
+def encode_messages(
+    messages: list[dict[str, str]],
+    raw_tokenizer: Tokenizer,
+    special_ids: dict[str, int],
+    reserved_ids: set[int],
+) -> tuple[list[int], list[int]]:
     tokens = [special_ids["<|bos|>"]]
     loss_mask = [0]
     newline_ids = encode_text(raw_tokenizer, "\n", reserved_ids)
     for message in messages:
         role = message["role"]
-        prefix = [special_ids["<|im_start|>"]] + encode_text(raw_tokenizer, f"{role}\n", reserved_ids)
+        prefix = [special_ids["<|im_start|>"]] + encode_text(
+            raw_tokenizer, f"{role}\n", reserved_ids
+        )
         content = encode_text(raw_tokenizer, message["content"], reserved_ids)
         suffix = [special_ids["<|im_end|>"]] + newline_ids
         assistant = role == "assistant"
         tokens.extend(prefix + content + suffix)
-        loss_mask.extend([0] * len(prefix) + [1 if assistant else 0] * len(content) + [1 if assistant else 0] + [0] * len(newline_ids))
+        loss_mask.extend(
+            [0] * len(prefix)
+            + [1 if assistant else 0] * len(content)
+            + [1 if assistant else 0]
+            + [0] * len(newline_ids)
+        )
     tokens.append(special_ids["<|eos|>"])
     loss_mask.append(1)
     return tokens, loss_mask
+
 
 def last_pair_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     if messages[-1]["role"] != "assistant":
@@ -149,7 +186,13 @@ def last_pair_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
             return [messages[index], messages[-1]]
     raise RuntimeError("对话缺少 user")
 
-def encode_last_pair(messages: list[dict[str, str]], raw_tokenizer: Tokenizer, special_ids: dict[str, int], reserved_ids: set[int]) -> tuple[list[int], list[int]]:
+
+def encode_last_pair(
+    messages: list[dict[str, str]],
+    raw_tokenizer: Tokenizer,
+    special_ids: dict[str, int],
+    reserved_ids: set[int],
+) -> tuple[list[int], list[int]]:
     pair = last_pair_messages(messages)
     user_ids = encode_text(raw_tokenizer, pair[0]["content"], reserved_ids)
     assistant_ids = encode_text(raw_tokenizer, pair[1]["content"], reserved_ids)
@@ -177,27 +220,40 @@ def encode_last_pair(messages: list[dict[str, str]], raw_tokenizer: Tokenizer, s
     loss_mask = [0]
     newline_ids = encode_text(raw_tokenizer, "\n", reserved_ids)
     for role, content_ids in (("user", user_content_ids), ("assistant", assistant_content_ids)):
-        prefix = [special_ids["<|im_start|>"]] + encode_text(raw_tokenizer, f"{role}\n", reserved_ids)
+        prefix = [special_ids["<|im_start|>"]] + encode_text(
+            raw_tokenizer, f"{role}\n", reserved_ids
+        )
         suffix = [special_ids["<|im_end|>"]] + newline_ids
         assistant = role == "assistant"
         tokens.extend(prefix + content_ids + suffix)
-        loss_mask.extend([0] * len(prefix) + [1 if assistant else 0] * len(content_ids) + [1 if assistant else 0] + [0] * len(newline_ids))
+        loss_mask.extend(
+            [0] * len(prefix)
+            + [1 if assistant else 0] * len(content_ids)
+            + [1 if assistant else 0]
+            + [0] * len(newline_ids)
+        )
     tokens.append(special_ids["<|eos|>"])
     loss_mask.append(1)
     if len(tokens) > RECORD_TOKENS:
         raise RuntimeError(f"截断后仍超过记录长度：{len(tokens)}")
     return tokens, loss_mask
 
+
 def drop_oldest_turn(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     start = 1 if messages and messages[0]["role"] == "system" else 0
     if len(messages) - start <= 2:
         return messages
-    return messages[:start] + messages[start + 2:]
+    return messages[:start] + messages[start + 2 :]
 
-def encode_record(record: dict[str, Any], raw_tokenizer: Tokenizer, special_ids: dict[str, int]) -> EncodedRecord:
+
+def encode_record(
+    record: dict[str, Any], raw_tokenizer: Tokenizer, special_ids: dict[str, int]
+) -> EncodedRecord:
     messages = record["messages"]
     reserved_ids = set(special_ids.values())
-    original_tokens, original_loss_mask = encode_messages(messages, raw_tokenizer, special_ids, reserved_ids)
+    original_tokens, original_loss_mask = encode_messages(
+        messages, raw_tokenizer, special_ids, reserved_ids
+    )
     fitted_messages = messages
     dropped_turns = 0
     tokens = original_tokens
@@ -208,9 +264,13 @@ def encode_record(record: dict[str, Any], raw_tokenizer: Tokenizer, special_ids:
             break
         fitted_messages = reduced
         dropped_turns += 1
-        tokens, loss_mask = encode_messages(fitted_messages, raw_tokenizer, special_ids, reserved_ids)
+        tokens, loss_mask = encode_messages(
+            fitted_messages, raw_tokenizer, special_ids, reserved_ids
+        )
     if len(tokens) > RECORD_TOKENS:
-        tokens, loss_mask = encode_last_pair(fitted_messages, raw_tokenizer, special_ids, reserved_ids)
+        tokens, loss_mask = encode_last_pair(
+            fitted_messages, raw_tokenizer, special_ids, reserved_ids
+        )
     length = len(tokens)
     if length < 3 or length > RECORD_TOKENS or len(tokens) != len(loss_mask):
         raise RuntimeError(f"编码长度异常：{record.get('id')}")
@@ -221,10 +281,29 @@ def encode_record(record: dict[str, Any], raw_tokenizer: Tokenizer, special_ids:
     padded_mask = np.zeros(RECORD_TOKENS, dtype=MASK_DTYPE)
     padded_tokens[:length] = tokens
     padded_mask[:length] = loss_mask
-    return EncodedRecord(padded_tokens, padded_mask, length, record["source"], len(original_tokens), supervised_tokens, len(original_tokens) > RECORD_TOKENS, dropped_turns)
+    return EncodedRecord(
+        padded_tokens,
+        padded_mask,
+        length,
+        record["source"],
+        len(original_tokens),
+        supervised_tokens,
+        len(original_tokens) > RECORD_TOKENS,
+        dropped_turns,
+    )
+
 
 def initial_stats() -> dict[str, Any]:
-    return {"records": 0, "stored_tokens": 0, "original_tokens": 0, "supervised_tokens": 0, "truncated_records": 0, "dropped_turns": 0, "sources": {}}
+    return {
+        "records": 0,
+        "stored_tokens": 0,
+        "original_tokens": 0,
+        "supervised_tokens": 0,
+        "truncated_records": 0,
+        "dropped_turns": 0,
+        "sources": {},
+    }
+
 
 def update_stats(stats: dict[str, Any], records: list[EncodedRecord]) -> None:
     source_stats = {source: dict(values) for source, values in stats.get("sources", {}).items()}
@@ -235,11 +314,14 @@ def update_stats(stats: dict[str, Any], records: list[EncodedRecord]) -> None:
         stats["supervised_tokens"] += record.supervised_tokens
         stats["truncated_records"] += int(record.truncated)
         stats["dropped_turns"] += record.dropped_turns
-        entry = source_stats.setdefault(record.source, {"records": 0, "effective_tokens": 0, "supervised_tokens": 0})
+        entry = source_stats.setdefault(
+            record.source, {"records": 0, "effective_tokens": 0, "supervised_tokens": 0}
+        )
         entry["records"] += 1
         entry["effective_tokens"] += record.length
         entry["supervised_tokens"] += record.supervised_tokens
     stats["sources"] = source_stats
+
 
 def write_binary(path: Path, array: np.ndarray) -> None:
     temporary_path = path.with_suffix(path.suffix + ".tmp")
@@ -248,6 +330,7 @@ def write_binary(path: Path, array: np.ndarray) -> None:
         file.flush()
         os.fsync(file.fileno())
     os.replace(temporary_path, path)
+
 
 def write_shard(split: str, shard_index: int, records: list[EncodedRecord]) -> dict[str, Any]:
     prefix = f"{split}-{shard_index:05d}"
@@ -268,8 +351,9 @@ def write_shard(split: str, shard_index: int, records: list[EncodedRecord]) -> d
         "lengths_path": relative_to_output(length_path),
         "tokens_sha256": sha256_file(token_path),
         "loss_mask_sha256": sha256_file(mask_path),
-        "lengths_sha256": sha256_file(length_path)
+        "lengths_sha256": sha256_file(length_path),
     }
+
 
 def build_runtime_config(input_manifest_sha256: str, tokenizer_sha256: str) -> dict[str, Any]:
     inputs = {}
@@ -286,8 +370,9 @@ def build_runtime_config(input_manifest_sha256: str, tokenizer_sha256: str) -> d
         "model_context_length": MODEL_CONTEXT_LENGTH,
         "record_tokens": RECORD_TOKENS,
         "records_per_shard": RECORDS_PER_SHARD,
-        "inputs": inputs
+        "inputs": inputs,
     }
+
 
 def load_or_create_checkpoint(runtime_config: dict[str, Any]) -> dict[str, Any]:
     fingerprint = sha256_json(runtime_config)
@@ -303,12 +388,24 @@ def load_or_create_checkpoint(runtime_config: dict[str, Any]) -> dict[str, Any]:
         "status": "running",
         "config_fingerprint": fingerprint,
         "runtime_config": runtime_config,
-        "splits": {split: {"next_line": 0, "next_shard": 0, "completed": False, "shards": [], "stats": initial_stats()} for split in SPLITS}
+        "splits": {
+            split: {
+                "next_line": 0,
+                "next_shard": 0,
+                "completed": False,
+                "shards": [],
+                "stats": initial_stats(),
+            }
+            for split in SPLITS
+        },
     }
     atomic_write_json(CHECKPOINT_PATH, checkpoint)
     return checkpoint
 
-def process_split(split: str, checkpoint: dict[str, Any], raw_tokenizer: Tokenizer, special_ids: dict[str, int]) -> None:
+
+def process_split(
+    split: str, checkpoint: dict[str, Any], raw_tokenizer: Tokenizer, special_ids: dict[str, int]
+) -> None:
     state = checkpoint["splits"][split]
     if state["completed"]:
         print(f"{split} 已完成，跳过。")
@@ -336,7 +433,9 @@ def process_split(split: str, checkpoint: dict[str, Any], raw_tokenizer: Tokeniz
             checkpoint["updated_at"] = now_iso()
             atomic_write_json(CHECKPOINT_PATH, checkpoint)
             ensure_free_disk_space()
-            print(f"{split}：{state['stats']['records']:,} 条，{state['stats']['stored_tokens']:,} 有效 tokens，分片 {state['next_shard']:,}")
+            print(
+                f"{split}：{state['stats']['records']:,} 条，{state['stats']['stored_tokens']:,} 有效 tokens，分片 {state['next_shard']:,}"
+            )
             buffer = []
         if buffer:
             shard = write_shard(split, int(state["next_shard"]), buffer)
@@ -347,16 +446,25 @@ def process_split(split: str, checkpoint: dict[str, Any], raw_tokenizer: Tokeniz
     state["completed"] = True
     checkpoint["updated_at"] = now_iso()
     atomic_write_json(CHECKPOINT_PATH, checkpoint)
-    print(f"{split} 完成：{state['stats']['records']:,} 条，{state['stats']['stored_tokens']:,} 有效 tokens")
+    print(
+        f"{split} 完成：{state['stats']['records']:,} 条，{state['stats']['stored_tokens']:,} 有效 tokens"
+    )
 
-def build_manifest(checkpoint: dict[str, Any], tokenizer: Tokenizer, special_ids: dict[str, int]) -> dict[str, Any]:
+
+def build_manifest(
+    checkpoint: dict[str, Any], tokenizer: Tokenizer, special_ids: dict[str, int]
+) -> dict[str, Any]:
     splits = {}
     total_records = 0
     total_tokens = 0
     total_supervised_tokens = 0
     for split in SPLITS:
         state = checkpoint["splits"][split]
-        splits[split] = {"completed": state["completed"], "stats": state["stats"], "shards": state["shards"]}
+        splits[split] = {
+            "completed": state["completed"],
+            "stats": state["stats"],
+            "shards": state["shards"],
+        }
         total_records += state["stats"]["records"]
         total_tokens += state["stats"]["stored_tokens"]
         total_supervised_tokens += state["stats"]["supervised_tokens"]
@@ -369,7 +477,7 @@ def build_manifest(checkpoint: dict[str, Any], tokenizer: Tokenizer, special_ids
             "path": str(TOKENIZER_PATH),
             "sha256": sha256_file(TOKENIZER_PATH),
             "vocab_size": tokenizer.get_vocab_size(),
-            "special_token_ids": special_ids
+            "special_token_ids": special_ids,
         },
         "storage": {
             "record_tokens": RECORD_TOKENS,
@@ -377,7 +485,7 @@ def build_manifest(checkpoint: dict[str, Any], tokenizer: Tokenizer, special_ids
             "tokens_dtype": TOKEN_DTYPE.str,
             "loss_mask_dtype": MASK_DTYPE.str,
             "lengths_dtype": LENGTH_DTYPE.str,
-            "records_per_shard": RECORDS_PER_SHARD
+            "records_per_shard": RECORDS_PER_SHARD,
         },
         "chat_template": "<|bos|><|im_start|>{role}\\n{content}<|im_end|>\\n...<|eos|>",
         "loss_policy": "assistant content, assistant <|im_end|>, and final <|eos|> only",
@@ -386,23 +494,37 @@ def build_manifest(checkpoint: dict[str, Any], tokenizer: Tokenizer, special_ids
             "last_user_max_tokens": MAX_LAST_USER_TOKENS,
             "last_assistant_min_tokens": MIN_LAST_ASSISTANT_TOKENS,
             "long_user_middle_truncation": True,
-            "long_assistant_keep_prefix": True
+            "long_assistant_keep_prefix": True,
         },
-        "totals": {"records": total_records, "effective_tokens": total_tokens, "supervised_tokens": total_supervised_tokens, "fixed_token_slots": total_records * RECORD_TOKENS},
+        "totals": {
+            "records": total_records,
+            "effective_tokens": total_tokens,
+            "supervised_tokens": total_supervised_tokens,
+            "fixed_token_slots": total_records * RECORD_TOKENS,
+        },
         "splits": splits,
         "config_fingerprint": checkpoint["config_fingerprint"],
     }
+
 
 def verify_shard(shard: dict[str, Any], vocab_size: int, pad_id: int) -> None:
     records = int(shard["records"])
     token_path = OUTPUT_ROOT / shard["tokens_path"]
     mask_path = OUTPUT_ROOT / shard["loss_mask_path"]
     length_path = OUTPUT_ROOT / shard["lengths_path"]
-    expected_sizes = {token_path: records * RECORD_TOKENS * TOKEN_DTYPE.itemsize, mask_path: records * RECORD_TOKENS * MASK_DTYPE.itemsize, length_path: records * LENGTH_DTYPE.itemsize}
+    expected_sizes = {
+        token_path: records * RECORD_TOKENS * TOKEN_DTYPE.itemsize,
+        mask_path: records * RECORD_TOKENS * MASK_DTYPE.itemsize,
+        length_path: records * LENGTH_DTYPE.itemsize,
+    }
     for path, expected_size in expected_sizes.items():
         if not path.exists() or path.stat().st_size != expected_size:
             raise RuntimeError(f"分片大小错误：{path}")
-    if sha256_file(token_path) != shard["tokens_sha256"] or sha256_file(mask_path) != shard["loss_mask_sha256"] or sha256_file(length_path) != shard["lengths_sha256"]:
+    if (
+        sha256_file(token_path) != shard["tokens_sha256"]
+        or sha256_file(mask_path) != shard["loss_mask_sha256"]
+        or sha256_file(length_path) != shard["lengths_sha256"]
+    ):
         raise RuntimeError(f"分片 SHA256 错误：{token_path.name}")
     tokens = np.memmap(token_path, dtype=TOKEN_DTYPE, mode="r", shape=(records, RECORD_TOKENS))
     masks = np.memmap(mask_path, dtype=MASK_DTYPE, mode="r", shape=(records, RECORD_TOKENS))
@@ -420,6 +542,7 @@ def verify_shard(shard: dict[str, Any], vocab_size: int, pad_id: int) -> None:
         if np.any(masks[index, length:] != 0) or np.any(tokens[index, length:] != pad_id):
             raise RuntimeError(f"Padding 验收失败：{token_path}:{index}")
 
+
 def verify_dataset() -> dict[str, Any]:
     if not MANIFEST_PATH.exists():
         raise FileNotFoundError(f"缺少 manifest：{MANIFEST_PATH}")
@@ -436,7 +559,11 @@ def verify_dataset() -> dict[str, Any]:
         split_records = 0
         for shard in entry["shards"]:
             print(f"验证：{split}/{Path(shard['tokens_path']).name}")
-            verify_shard(shard, int(manifest["tokenizer"]["vocab_size"]), int(manifest["tokenizer"]["special_token_ids"]["<|pad|>"]))
+            verify_shard(
+                shard,
+                int(manifest["tokenizer"]["vocab_size"]),
+                int(manifest["tokenizer"]["special_token_ids"]["<|pad|>"]),
+            )
             split_records += int(shard["records"])
         if split_records != int(entry["stats"]["records"]):
             raise RuntimeError(f"{split} 记录汇总错误")
@@ -445,11 +572,15 @@ def verify_dataset() -> dict[str, Any]:
         raise RuntimeError("全局记录汇总错误")
     return manifest["totals"]
 
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="将 XiangLM SFT 转换为定长 token、loss mask 和 length 分片")
+    parser = argparse.ArgumentParser(
+        description="将 XiangLM SFT 转换为定长 token、loss mask 和 length 分片"
+    )
     parser.add_argument("--verify-only", action="store_true", help="只验证已生成的 SFT token 分片")
     parser.add_argument("--no-verify", action="store_true", help="完成 tokenize 后暂时跳过全量验证")
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -468,7 +599,9 @@ def main() -> None:
         print(f"验收通过：{totals}")
         return
     control_tokenizer, raw_tokenizer, special_ids = load_tokenizers()
-    runtime_config = build_runtime_config(sha256_file(INPUT_MANIFEST_PATH), sha256_file(TOKENIZER_PATH))
+    runtime_config = build_runtime_config(
+        sha256_file(INPUT_MANIFEST_PATH), sha256_file(TOKENIZER_PATH)
+    )
     checkpoint = load_or_create_checkpoint(runtime_config)
     if checkpoint["status"] == "complete":
         print("Checkpoint 显示 tokenize 已完成。")
@@ -500,6 +633,7 @@ def main() -> None:
     if not args.no_verify:
         totals = verify_dataset()
         print(f"完整验收通过：{totals}")
+
 
 if __name__ == "__main__":
     main()

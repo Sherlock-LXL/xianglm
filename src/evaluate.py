@@ -12,6 +12,7 @@ from src.config import ExperimentConfig, get_experiment_config
 from src.data_loader import MixedPretrainingLoader
 from src.model import TransformerLM
 
+
 @dataclass(frozen=True)
 class EvaluationResult:
     overall_loss: float
@@ -19,6 +20,7 @@ class EvaluationResult:
     source_losses: dict[str, float]
     source_perplexities: dict[str, float]
     batches_per_source: int
+
 
 def autocast_context(device: torch.device, precision: str) -> ContextManager[object]:
     if precision == "float32":
@@ -32,16 +34,29 @@ def autocast_context(device: torch.device, precision: str) -> ContextManager[obj
         raise ValueError(f"未知精度：{precision}") from error
     return torch.autocast(device_type="cuda", dtype=dtype)
 
+
 def safe_perplexity(loss: float) -> float:
     return math.exp(min(loss, 50.0))
 
+
 @torch.no_grad()
-def evaluate_model(*, model: TransformerLM, experiment: ExperimentConfig, device: torch.device, total_batches: int | None = None) -> EvaluationResult:
+def evaluate_model(
+    *,
+    model: TransformerLM,
+    experiment: ExperimentConfig,
+    device: torch.device,
+    total_batches: int | None = None,
+) -> EvaluationResult:
     if total_batches is None:
         total_batches = experiment.train.eval_batches
     source_names = [name for name, _ in experiment.data.source_weights]
     batches_per_source = max(1, total_batches // len(source_names))
-    loader = MixedPretrainingLoader(data_config=experiment.data, context_length=experiment.model.context_length, split=experiment.data.validation_split, seed=experiment.data.seed + 100_000)
+    loader = MixedPretrainingLoader(
+        data_config=experiment.data,
+        context_length=experiment.model.context_length,
+        split=experiment.data.validation_split,
+        seed=experiment.data.seed + 100_000,
+    )
     was_training = model.training
     model.eval()
     source_losses: dict[str, float] = {}
@@ -49,7 +64,9 @@ def evaluate_model(*, model: TransformerLM, experiment: ExperimentConfig, device
         for source_name in source_names:
             loss_sum = 0.0
             for _ in range(batches_per_source):
-                batch = loader.next_batch(experiment.train.micro_batch_size, device=device, source_name=source_name)
+                batch = loader.next_batch(
+                    experiment.train.micro_batch_size, device=device, source_name=source_name
+                )
                 with autocast_context(device, experiment.train.precision):
                     output = model(input_ids=batch.input_ids, labels=batch.labels)
                 if output.loss is None:
@@ -70,6 +87,7 @@ def evaluate_model(*, model: TransformerLM, experiment: ExperimentConfig, device
         batches_per_source=batches_per_source,
     )
 
+
 def print_evaluation_result(result: EvaluationResult) -> None:
     print("=" * 72)
     print("XiangLM Validation")
@@ -81,6 +99,7 @@ def print_evaluation_result(result: EvaluationResult) -> None:
     for source_name, loss in result.source_losses.items():
         perplexity = result.source_perplexities[source_name]
         print(f"{source_name}: loss={loss:.6f}, ppl={perplexity:.3f}")
+
 
 def resolve_checkpoint_path(experiment: ExperimentConfig, requested: str | None) -> Path:
     if requested is not None:
@@ -94,14 +113,20 @@ def resolve_checkpoint_path(experiment: ExperimentConfig, requested: str | None)
     latest = experiment.checkpoint_directory / LATEST_CHECKPOINT_NAME
     if latest.exists():
         return latest
-    raise FileNotFoundError(f"没有找到{BEST_CHECKPOINT_NAME}或{LATEST_CHECKPOINT_NAME}：{experiment.checkpoint_directory}")
+    raise FileNotFoundError(
+        f"没有找到{BEST_CHECKPOINT_NAME}或{LATEST_CHECKPOINT_NAME}：{experiment.checkpoint_directory}"
+    )
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="独立评估XiangLM checkpoint")
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--batches", type=int, default=None, help="全部来源合计的近似batch预算")
-    parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -109,12 +134,20 @@ def main() -> None:
     device = torch.device(args.device)
     checkpoint_path = resolve_checkpoint_path(experiment, args.checkpoint)
     model = TransformerLM(experiment.model, gradient_checkpointing=False).to(device)
-    checkpoint = load_model_checkpoint(path=checkpoint_path, model=model, expected_experiment_name=experiment.name, map_location=device)
+    checkpoint = load_model_checkpoint(
+        path=checkpoint_path,
+        model=model,
+        expected_experiment_name=experiment.name,
+        map_location=device,
+    )
     print(f"Checkpoint：{checkpoint_path}")
     print(f"Step：{int(checkpoint['step']):,}")
     print(f"已训练tokens：{int(checkpoint['tokens_processed']):,}")
-    result = evaluate_model(model=model, experiment=experiment, device=device, total_batches=args.batches)
+    result = evaluate_model(
+        model=model, experiment=experiment, device=device, total_batches=args.batches
+    )
     print_evaluation_result(result)
+
 
 if __name__ == "__main__":
     main()

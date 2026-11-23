@@ -10,11 +10,20 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.checkpoint import BEST_CHECKPOINT_NAME, LATEST_CHECKPOINT_NAME, capture_rng_state, latest_checkpoint_path, load_training_checkpoint, restore_rng_state, save_training_checkpoint
+from src.checkpoint import (
+    BEST_CHECKPOINT_NAME,
+    LATEST_CHECKPOINT_NAME,
+    capture_rng_state,
+    latest_checkpoint_path,
+    load_training_checkpoint,
+    restore_rng_state,
+    save_training_checkpoint,
+)
 from src.config import LOG_ROOT, ExperimentConfig, get_experiment_config, print_config_summary
 from src.data_loader import MixedPretrainingLoader
 from src.evaluate import EvaluationResult, autocast_context, evaluate_model
 from src.model import TransformerLM
+
 
 def set_global_seed(seed: int) -> None:
     random.seed(seed)
@@ -22,6 +31,7 @@ def set_global_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
 
 def learning_rate_for_tokens(*, tokens_processed: int, experiment: ExperimentConfig) -> float:
     train = experiment.train
@@ -33,11 +43,15 @@ def learning_rate_for_tokens(*, tokens_processed: int, experiment: ExperimentCon
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
     return train.min_learning_rate + cosine * (train.max_learning_rate - train.min_learning_rate)
 
+
 def set_optimizer_learning_rate(optimizer: torch.optim.Optimizer, learning_rate: float) -> None:
     for group in optimizer.param_groups:
         group["lr"] = learning_rate
 
-def build_optimizer(model: nn.Module, experiment: ExperimentConfig, device: torch.device) -> torch.optim.Optimizer:
+
+def build_optimizer(
+    model: nn.Module, experiment: ExperimentConfig, device: torch.device
+) -> torch.optim.Optimizer:
     decay_parameters: list[nn.Parameter] = []
     no_decay_parameters: list[nn.Parameter] = []
     for parameter in model.parameters():
@@ -47,7 +61,10 @@ def build_optimizer(model: nn.Module, experiment: ExperimentConfig, device: torc
             decay_parameters.append(parameter)
         else:
             no_decay_parameters.append(parameter)
-    parameter_groups = [{"params": decay_parameters, "weight_decay": experiment.train.weight_decay}, {"params": no_decay_parameters, "weight_decay": 0.0}]
+    parameter_groups = [
+        {"params": decay_parameters, "weight_decay": experiment.train.weight_decay},
+        {"params": no_decay_parameters, "weight_decay": 0.0},
+    ]
     optimizer_kwargs: dict[str, Any] = {
         "params": parameter_groups,
         "lr": experiment.train.max_learning_rate,
@@ -61,11 +78,13 @@ def build_optimizer(model: nn.Module, experiment: ExperimentConfig, device: torc
             pass
     return torch.optim.AdamW(**optimizer_kwargs)
 
+
 def build_grad_scaler(experiment: ExperimentConfig, device: torch.device) -> Any:
     enabled = device.type == "cuda" and experiment.train.precision == "float16"
     if not enabled:
         return None
     return torch.amp.GradScaler("cuda", enabled=True)
+
 
 def append_json_log(path: Path, entry: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,13 +92,17 @@ def append_json_log(path: Path, entry: dict[str, Any]) -> None:
         file.write(json.dumps(entry, ensure_ascii=False))
         file.write("\n")
 
+
 def format_source_counts(counts: dict[str, int]) -> str:
     total = sum(counts.values())
     if total == 0:
         return ""
     return ", ".join(f"{name}={count / total:.1%}" for name, count in counts.items())
 
-def validation_log_entry(*, step: int, tokens_processed: int, result: EvaluationResult) -> dict[str, Any]:
+
+def validation_log_entry(
+    *, step: int, tokens_processed: int, result: EvaluationResult
+) -> dict[str, Any]:
     return {
         "event": "validation",
         "step": step,
@@ -90,7 +113,10 @@ def validation_log_entry(*, step: int, tokens_processed: int, result: Evaluation
         "source_perplexities": result.source_perplexities,
     }
 
-def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, max_steps: int | None) -> None:
+
+def train(
+    *, experiment: ExperimentConfig, device: torch.device, resume: bool, max_steps: int | None
+) -> None:
     if device.type == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError("PyTorch无法使用CUDA")
@@ -102,8 +128,15 @@ def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, m
     set_global_seed(experiment.train.seed)
     print_config_summary(experiment)
     print(f"设备：{device}")
-    train_loader = MixedPretrainingLoader(data_config=experiment.data, context_length=experiment.model.context_length, split=experiment.data.train_split, seed=experiment.train.seed)
-    model = TransformerLM(experiment.model, gradient_checkpointing=experiment.train.gradient_checkpointing).to(device)
+    train_loader = MixedPretrainingLoader(
+        data_config=experiment.data,
+        context_length=experiment.model.context_length,
+        split=experiment.data.train_split,
+        seed=experiment.train.seed,
+    )
+    model = TransformerLM(
+        experiment.model, gradient_checkpointing=experiment.train.gradient_checkpointing
+    ).to(device)
     optimizer = build_optimizer(model, experiment, device)
     scaler = build_grad_scaler(experiment, device)
     step = 0
@@ -115,8 +148,18 @@ def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, m
         raise RuntimeError(f"检测到已归档预训练模型：{best}。如需重新预训练，请先移动该文件。")
     if latest is not None:
         if not resume:
-            raise RuntimeError(f"检测到已有{LATEST_CHECKPOINT_NAME}。请启用续训，或手动移动旧checkpoint。")
-        restored = load_training_checkpoint(path=latest, experiment=experiment, model=model, optimizer=optimizer, scaler=scaler, train_loader=train_loader, map_location=device)
+            raise RuntimeError(
+                f"检测到已有{LATEST_CHECKPOINT_NAME}。请启用续训，或手动移动旧checkpoint。"
+            )
+        restored = load_training_checkpoint(
+            path=latest,
+            experiment=experiment,
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            train_loader=train_loader,
+            map_location=device,
+        )
         step = restored.step
         tokens_processed = restored.tokens_processed
         best_validation_loss = restored.best_validation_loss
@@ -143,8 +186,12 @@ def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, m
             in_step = True
             step_start_loader_state = train_loader.state_dict()
             step_start_rng_state = capture_rng_state()
-            next_token_count = min(experiment.train.target_tokens, tokens_processed + global_batch_tokens)
-            learning_rate = learning_rate_for_tokens(tokens_processed=next_token_count, experiment=experiment)
+            next_token_count = min(
+                experiment.train.target_tokens, tokens_processed + global_batch_tokens
+            )
+            learning_rate = learning_rate_for_tokens(
+                tokens_processed=next_token_count, experiment=experiment
+            )
             set_optimizer_learning_rate(optimizer, learning_rate)
             optimizer.zero_grad(set_to_none=True)
             step_loss = 0.0
@@ -167,7 +214,9 @@ def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, m
                 step_loss += float(micro_loss.item())
             if scaler is not None:
                 scaler.unscale_(optimizer)
-            gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), experiment.train.grad_clip_norm)
+            gradient_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), experiment.train.grad_clip_norm
+            )
             if scaler is not None:
                 scaler.step(optimizer)
                 scaler.update()
@@ -219,17 +268,28 @@ def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, m
                 interval_source_counts = {name: 0 for name, _ in experiment.data.source_weights}
                 interval_start = time.perf_counter()
                 interval_start_tokens = tokens_processed
-            is_final_step = tokens_processed >= experiment.train.target_tokens or step >= target_steps
+            is_final_step = (
+                tokens_processed >= experiment.train.target_tokens or step >= target_steps
+            )
             should_evaluate = step % experiment.train.eval_interval_steps == 0 or is_final_step
             is_best = False
             if should_evaluate:
                 result = evaluate_model(model=model, experiment=experiment, device=device)
-                print(f"validation：loss={result.overall_loss:.6f}, ppl={result.overall_perplexity:.3f}, sources={result.source_losses}")
-                append_json_log(log_path, validation_log_entry(step=step, tokens_processed=tokens_processed, result=result))
+                print(
+                    f"validation：loss={result.overall_loss:.6f}, ppl={result.overall_perplexity:.3f}, sources={result.source_losses}"
+                )
+                append_json_log(
+                    log_path,
+                    validation_log_entry(
+                        step=step, tokens_processed=tokens_processed, result=result
+                    ),
+                )
                 if result.overall_loss < best_validation_loss:
                     best_validation_loss = result.overall_loss
                     is_best = True
-            should_checkpoint = step % experiment.train.checkpoint_interval_steps == 0 or is_best or is_final_step
+            should_checkpoint = (
+                step % experiment.train.checkpoint_interval_steps == 0 or is_best or is_final_step
+            )
             if should_checkpoint:
                 path = save_training_checkpoint(
                     directory=experiment.checkpoint_directory,
@@ -273,19 +333,31 @@ def train(*, experiment: ExperimentConfig, device: torch.device, resume: bool, m
     print(f"已训练tokens：{tokens_processed:,}")
     print(f"最佳validation loss：{best_validation_loss:.6f}")
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="训练XiangLM")
-    parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--no-resume", action="store_true", help=f"禁止自动读取已有{LATEST_CHECKPOINT_NAME}")
+    parser.add_argument(
+        "--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    parser.add_argument(
+        "--no-resume", action="store_true", help=f"禁止自动读取已有{LATEST_CHECKPOINT_NAME}"
+    )
     parser.add_argument("--max-steps", type=int, default=None, help="仅用于短程测试的step上限")
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
     if args.max_steps is not None and args.max_steps <= 0:
         raise ValueError("--max-steps必须为正数")
     experiment = get_experiment_config()
-    train(experiment=experiment, device=torch.device(args.device), resume=not args.no_resume, max_steps=args.max_steps)
+    train(
+        experiment=experiment,
+        device=torch.device(args.device),
+        resume=not args.no_resume,
+        max_steps=args.max_steps,
+    )
+
 
 if __name__ == "__main__":
     main()

@@ -14,7 +14,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.checkpoint import atomic_torch_save, capture_rng_state, copy_checkpoint_atomic, restore_rng_state
+from src.checkpoint import (
+    atomic_torch_save,
+    capture_rng_state,
+    copy_checkpoint_atomic,
+    restore_rng_state,
+)
 from src.config import (
     CHECKPOINT_ROOT,
     LOG_ROOT,
@@ -44,6 +49,7 @@ DEFAULT_WARMUP_STEPS = 200
 DEFAULT_EVAL_INTERVAL_STEPS = 500
 DEFAULT_CHECKPOINT_INTERVAL_STEPS = 1_000
 ARCHIVE_LATEST_ON_COMPLETE = False
+
 
 @dataclass(frozen=True)
 class SFTConfig:
@@ -91,8 +97,17 @@ class SFTConfig:
             raise ValueError("优化器参数无效")
         if self.precision not in {"bfloat16", "float16", "float32"}:
             raise ValueError(f"不支持的精度：{self.precision}")
-        if min(self.log_interval_steps, self.eval_interval_steps, self.eval_examples, self.checkpoint_interval_steps) <= 0:
+        if (
+            min(
+                self.log_interval_steps,
+                self.eval_interval_steps,
+                self.eval_examples,
+                self.checkpoint_interval_steps,
+            )
+            <= 0
+        ):
             raise ValueError("日志、验证和checkpoint参数必须为正数")
+
 
 @dataclass(frozen=True)
 class ShardInfo:
@@ -101,6 +116,7 @@ class ShardInfo:
     lengths_path: Path
     records: int
 
+
 @dataclass
 class SFTBatch:
     input_ids: torch.Tensor
@@ -108,6 +124,7 @@ class SFTBatch:
     examples: int
     effective_tokens: int
     supervised_tokens: int
+
 
 class SFTDataset:
     def __init__(self, manifest_path: Path, split: str) -> None:
@@ -166,13 +183,27 @@ class SFTDataset:
         if cached is not None:
             return cached
         shard = self.shards[shard_index]
-        tokens = np.memmap(shard.tokens_path, mode="r", dtype=self.tokens_dtype, shape=(shard.records, self.record_tokens))
-        loss_mask = np.memmap(shard.loss_mask_path, mode="r", dtype=self.loss_mask_dtype, shape=(shard.records, self.record_tokens))
-        lengths = np.memmap(shard.lengths_path, mode="r", dtype=self.lengths_dtype, shape=(shard.records,))
+        tokens = np.memmap(
+            shard.tokens_path,
+            mode="r",
+            dtype=self.tokens_dtype,
+            shape=(shard.records, self.record_tokens),
+        )
+        loss_mask = np.memmap(
+            shard.loss_mask_path,
+            mode="r",
+            dtype=self.loss_mask_dtype,
+            shape=(shard.records, self.record_tokens),
+        )
+        lengths = np.memmap(
+            shard.lengths_path, mode="r", dtype=self.lengths_dtype, shape=(shard.records,)
+        )
         self.maps[shard_index] = (tokens, loss_mask, lengths)
         return self.maps[shard_index]
 
-    def get_batch(self, indices: np.ndarray, device: torch.device, pin_memory: bool = True) -> SFTBatch:
+    def get_batch(
+        self, indices: np.ndarray, device: torch.device, pin_memory: bool = True
+    ) -> SFTBatch:
         batch_size = len(indices)
         if batch_size <= 0:
             raise ValueError("batch不能为空")
@@ -205,10 +236,17 @@ class SFTDataset:
             labels = labels.pin_memory()
         input_ids = input_ids.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        return SFTBatch(input_ids=input_ids, labels=labels, examples=batch_size, effective_tokens=effective_tokens, supervised_tokens=supervised_tokens)
+        return SFTBatch(
+            input_ids=input_ids,
+            labels=labels,
+            examples=batch_size,
+            effective_tokens=effective_tokens,
+            supervised_tokens=supervised_tokens,
+        )
 
     def close(self) -> None:
         self.maps.clear()
+
 
 class ShuffledSFTLoader:
     def __init__(self, dataset: SFTDataset, seed: int, examples_processed: int = 0) -> None:
@@ -244,7 +282,7 @@ class ShuffledSFTLoader:
         remaining_epoch = self.dataset.records - position
         remaining_total = total_examples - self.examples_processed
         count = min(batch_size, remaining_epoch, remaining_total)
-        indices = self._epoch_permutation(epoch)[position:position + count]
+        indices = self._epoch_permutation(epoch)[position : position + count]
         self.examples_processed += count
         return indices
 
@@ -262,6 +300,7 @@ class ShuffledSFTLoader:
         self._permutation_epoch = -1
         self._permutation = None
 
+
 def set_global_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -269,10 +308,12 @@ def set_global_seed(seed: int) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+
 def append_json_log(entry: dict[str, Any]) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as file:
         file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -281,11 +322,30 @@ def sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
-def build_optimizer(model: nn.Module, config: SFTConfig, device: torch.device) -> torch.optim.Optimizer:
-    decay_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad and parameter.ndim >= 2]
-    no_decay_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad and parameter.ndim < 2]
-    parameter_groups = [{"params": decay_parameters, "weight_decay": config.weight_decay}, {"params": no_decay_parameters, "weight_decay": 0.0}]
-    kwargs: dict[str, Any] = {"params": parameter_groups, "lr": config.max_learning_rate, "betas": (config.adam_beta1, config.adam_beta2), "eps": config.adam_eps}
+
+def build_optimizer(
+    model: nn.Module, config: SFTConfig, device: torch.device
+) -> torch.optim.Optimizer:
+    decay_parameters = [
+        parameter
+        for parameter in model.parameters()
+        if parameter.requires_grad and parameter.ndim >= 2
+    ]
+    no_decay_parameters = [
+        parameter
+        for parameter in model.parameters()
+        if parameter.requires_grad and parameter.ndim < 2
+    ]
+    parameter_groups = [
+        {"params": decay_parameters, "weight_decay": config.weight_decay},
+        {"params": no_decay_parameters, "weight_decay": 0.0},
+    ]
+    kwargs: dict[str, Any] = {
+        "params": parameter_groups,
+        "lr": config.max_learning_rate,
+        "betas": (config.adam_beta1, config.adam_beta2),
+        "eps": config.adam_eps,
+    }
     if device.type == "cuda":
         try:
             return torch.optim.AdamW(**kwargs, fused=True)
@@ -293,10 +353,12 @@ def build_optimizer(model: nn.Module, config: SFTConfig, device: torch.device) -
             pass
     return torch.optim.AdamW(**kwargs)
 
+
 def build_grad_scaler(config: SFTConfig, device: torch.device) -> Any:
     if device.type != "cuda" or config.precision != "float16":
         return None
     return torch.amp.GradScaler("cuda", enabled=True)
+
 
 def learning_rate_for_step(step: int, total_steps: int, config: SFTConfig) -> float:
     warmup_steps = min(config.warmup_steps, max(0, total_steps - 1))
@@ -307,9 +369,11 @@ def learning_rate_for_step(step: int, total_steps: int, config: SFTConfig) -> fl
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
     return config.min_learning_rate + cosine * (config.max_learning_rate - config.min_learning_rate)
 
+
 def set_learning_rate(optimizer: torch.optim.Optimizer, learning_rate: float) -> None:
     for group in optimizer.param_groups:
         group["lr"] = learning_rate
+
 
 def resolve_base_checkpoint(requested: str | None) -> Path:
     if requested is not None:
@@ -322,15 +386,20 @@ def resolve_base_checkpoint(requested: str | None) -> Path:
             return path
     raise FileNotFoundError(f"没有找到200M Base checkpoint：{CHECKPOINT_ROOT}")
 
+
 def load_base_model(model: TransformerLM, path: Path) -> dict[str, int]:
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if checkpoint.get("experiment_name") != "local_200m":
         raise RuntimeError(f"Base checkpoint配置错误：{checkpoint.get('experiment_name')}")
     model.load_state_dict(checkpoint["model"], strict=True)
-    metadata = {"step": int(checkpoint.get("step", 0)), "tokens_processed": int(checkpoint.get("tokens_processed", 0))}
+    metadata = {
+        "step": int(checkpoint.get("step", 0)),
+        "tokens_processed": int(checkpoint.get("tokens_processed", 0)),
+    }
     del checkpoint
     gc.collect()
     return metadata
+
 
 def save_sft_checkpoint(
     *,
@@ -374,6 +443,7 @@ def save_sft_checkpoint(
         copy_checkpoint_atomic(LATEST_PATH, BEST_PATH)
     return LATEST_PATH
 
+
 def load_sft_checkpoint(
     *,
     model: TransformerLM,
@@ -383,7 +453,10 @@ def load_sft_checkpoint(
     config: SFTConfig,
 ) -> tuple[int, int, int, float, Path, dict[str, int]]:
     checkpoint = torch.load(LATEST_PATH, map_location="cpu", weights_only=False)
-    if checkpoint.get("experiment_name") != "local_200m" or checkpoint.get("training_stage") != STAGE_NAME:
+    if (
+        checkpoint.get("experiment_name") != "local_200m"
+        or checkpoint.get("training_stage") != STAGE_NAME
+    ):
         raise RuntimeError(f"{LATEST_PATH.name}不是当前SFT任务的checkpoint")
     if checkpoint.get("data_manifest_sha256") != sha256_file(MANIFEST_PATH):
         raise RuntimeError("SFT数据manifest与checkpoint不一致")
@@ -401,13 +474,26 @@ def load_sft_checkpoint(
     supervised_tokens = int(checkpoint["sft_supervised_tokens_processed"])
     best_validation_loss = float(checkpoint["best_validation_loss"])
     base_checkpoint = Path(checkpoint["base_checkpoint"])
-    base_metadata = {"step": int(checkpoint["base_step"]), "tokens_processed": int(checkpoint["base_tokens_processed"])}
+    base_metadata = {
+        "step": int(checkpoint["base_step"]),
+        "tokens_processed": int(checkpoint["base_tokens_processed"]),
+    }
     del checkpoint
     gc.collect()
-    return step, effective_tokens, supervised_tokens, best_validation_loss, base_checkpoint, base_metadata
+    return (
+        step,
+        effective_tokens,
+        supervised_tokens,
+        best_validation_loss,
+        base_checkpoint,
+        base_metadata,
+    )
+
 
 @torch.no_grad()
-def evaluate(model: TransformerLM, dataset: SFTDataset, config: SFTConfig, device: torch.device) -> tuple[float, float, int, int]:
+def evaluate(
+    model: TransformerLM, dataset: SFTDataset, config: SFTConfig, device: torch.device
+) -> tuple[float, float, int, int]:
     model.eval()
     count = min(config.eval_examples, dataset.records)
     permutation = np.random.default_rng(config.seed + 10_000).permutation(dataset.records)[:count]
@@ -415,7 +501,7 @@ def evaluate(model: TransformerLM, dataset: SFTDataset, config: SFTConfig, devic
     supervised_tokens = 0
     effective_tokens = 0
     for start in range(0, count, config.micro_batch_size):
-        batch = dataset.get_batch(permutation[start:start + config.micro_batch_size], device)
+        batch = dataset.get_batch(permutation[start : start + config.micro_batch_size], device)
         with autocast_context(device, config.precision):
             output = model(input_ids=batch.input_ids, labels=batch.labels)
         if output.loss is None or not torch.isfinite(output.loss):
@@ -428,7 +514,14 @@ def evaluate(model: TransformerLM, dataset: SFTDataset, config: SFTConfig, devic
     model.train()
     return loss, perplexity, effective_tokens, supervised_tokens
 
-def print_summary(config: SFTConfig, train_dataset: SFTDataset, validation_dataset: SFTDataset, base_checkpoint: Path, total_steps: int) -> None:
+
+def print_summary(
+    config: SFTConfig,
+    train_dataset: SFTDataset,
+    validation_dataset: SFTDataset,
+    base_checkpoint: Path,
+    total_steps: int,
+) -> None:
     model_config = get_experiment_config(require_data_manifest=False).model
     print("=" * 72)
     print(SFT_TITLE)
@@ -437,7 +530,9 @@ def print_summary(config: SFTConfig, train_dataset: SFTDataset, validation_datas
     print(f"训练数据：{MANIFEST_PATH}")
     print(f"输出目录：{OUTPUT_ROOT}")
     print(f"训练样本：{train_dataset.records:,}")
-    print(f"验证样本：{validation_dataset.records:,}，每次固定评估{min(config.eval_examples, validation_dataset.records):,}条")
+    print(
+        f"验证样本：{validation_dataset.records:,}，每次固定评估{min(config.eval_examples, validation_dataset.records):,}条"
+    )
     print(f"Epochs：{config.epochs}")
     print(f"Micro batch：{config.micro_batch_size}")
     print(f"梯度累积：{config.gradient_accumulation_steps}")
@@ -450,7 +545,16 @@ def print_summary(config: SFTConfig, train_dataset: SFTDataset, validation_datas
     print(f"Loss：仅assistant回答token")
     print()
 
-def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: str | None, resume: bool, max_steps: int | None, inspect_only: bool) -> None:
+
+def train(
+    *,
+    config: SFTConfig,
+    device: torch.device,
+    base_checkpoint_argument: str | None,
+    resume: bool,
+    max_steps: int | None,
+    inspect_only: bool,
+) -> None:
     config.validate()
     experiment = get_experiment_config(require_data_manifest=False)
     if device.type == "cuda":
@@ -465,7 +569,9 @@ def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: 
     train_dataset = SFTDataset(MANIFEST_PATH, "train")
     validation_dataset = SFTDataset(MANIFEST_PATH, "validation")
     if train_dataset.context_length != experiment.model.context_length:
-        raise RuntimeError(f"数据与模型上下文不一致：{train_dataset.context_length} != {experiment.model.context_length}")
+        raise RuntimeError(
+            f"数据与模型上下文不一致：{train_dataset.context_length} != {experiment.model.context_length}"
+        )
     if int(train_dataset.manifest["tokenizer"]["vocab_size"]) != experiment.model.vocab_size:
         raise RuntimeError("SFT tokenizer词表与模型不一致")
     loader = ShuffledSFTLoader(train_dataset, config.seed)
@@ -495,7 +601,14 @@ def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: 
     if LATEST_PATH.exists():
         if not resume:
             raise RuntimeError(f"检测到已有SFT checkpoint：{LATEST_PATH}")
-        step, effective_tokens, supervised_tokens, best_validation_loss, base_checkpoint, base_metadata = load_sft_checkpoint(
+        (
+            step,
+            effective_tokens,
+            supervised_tokens,
+            best_validation_loss,
+            base_checkpoint,
+            base_metadata,
+        ) = load_sft_checkpoint(
             model=model,
             optimizer=optimizer,
             scaler=scaler,
@@ -563,7 +676,9 @@ def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: 
                 step_loss_sum += float(micro_loss.item()) * batch.supervised_tokens
             if scaler is not None:
                 scaler.unscale_(optimizer)
-            gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
+            gradient_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), config.grad_clip_norm
+            )
             if scaler is None:
                 optimizer.step()
             else:
@@ -587,9 +702,13 @@ def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: 
                 compute_tokens = interval_examples * experiment.model.context_length
                 tokens_per_second = compute_tokens / max(elapsed, 1e-9)
                 completion = loader.examples_processed / total_examples
-                remaining_compute_tokens = (total_examples - loader.examples_processed) * experiment.model.context_length
+                remaining_compute_tokens = (
+                    total_examples - loader.examples_processed
+                ) * experiment.model.context_length
                 eta_hours = remaining_compute_tokens / max(tokens_per_second, 1e-9) / 3600
-                memory_gib = torch.cuda.max_memory_allocated() / 1024**3 if device.type == "cuda" else 0.0
+                memory_gib = (
+                    torch.cuda.max_memory_allocated() / 1024**3 if device.type == "cuda" else 0.0
+                )
                 epoch_value = loader.examples_processed / train_dataset.records
                 print(
                     f"step={step:,}/{total_steps:,} epoch={epoch_value:.3f}/{config.epochs} 样本={loader.examples_processed:,}/{total_examples:,} 完成={completion:.2%} "
@@ -622,7 +741,9 @@ def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: 
             should_evaluate = step % config.eval_interval_steps == 0 or is_final
             is_best = False
             if should_evaluate:
-                validation_loss, perplexity, validation_effective, validation_supervised = evaluate(model, validation_dataset, config, device)
+                validation_loss, perplexity, validation_effective, validation_supervised = evaluate(
+                    model, validation_dataset, config, device
+                )
                 print(
                     f"validation：loss={validation_loss:.6f}, ppl={perplexity:.3f}, 样本={min(config.eval_examples, validation_dataset.records):,}, "
                     f"有效tokens={validation_effective:,}, 监督tokens={validation_supervised:,}"
@@ -699,6 +820,7 @@ def train(*, config: SFTConfig, device: torch.device, base_checkpoint_argument: 
         LATEST_PATH.unlink()
         print(f"已清理续训checkpoint：{LATEST_PATH}")
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"训练{SFT_TITLE}")
     parser.add_argument("--base-checkpoint", default=None)
@@ -709,12 +831,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-learning-rate", type=float, default=DEFAULT_MIN_LEARNING_RATE)
     parser.add_argument("--warmup-steps", type=int, default=DEFAULT_WARMUP_STEPS)
     parser.add_argument("--eval-interval-steps", type=int, default=DEFAULT_EVAL_INTERVAL_STEPS)
-    parser.add_argument("--checkpoint-interval-steps", type=int, default=DEFAULT_CHECKPOINT_INTERVAL_STEPS)
+    parser.add_argument(
+        "--checkpoint-interval-steps", type=int, default=DEFAULT_CHECKPOINT_INTERVAL_STEPS
+    )
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--inspect-only", action="store_true")
-    parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -738,6 +865,7 @@ def main() -> None:
         max_steps=args.max_steps,
         inspect_only=args.inspect_only,
     )
+
 
 if __name__ == "__main__":
     main()

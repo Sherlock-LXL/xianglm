@@ -5,10 +5,21 @@ import torch
 from src.config import ModelConfig, estimate_parameter_count
 from src.model import TransformerLM
 
+
 class TransformerLMTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.model_config = ModelConfig(vocab_size=128, context_length=32, d_model=64, n_layers=2, n_heads=4, d_ff=128, dropout=0.0, tie_embeddings=True, use_bias=False)
+        cls.model_config = ModelConfig(
+            vocab_size=128,
+            context_length=32,
+            d_model=64,
+            n_layers=2,
+            n_heads=4,
+            d_ff=128,
+            dropout=0.0,
+            tie_embeddings=True,
+            use_bias=False,
+        )
         cls.model = TransformerLM(cls.model_config)
 
     def test_parameter_count(self) -> None:
@@ -25,7 +36,9 @@ class TransformerLMTest(unittest.TestCase):
         self.assertTrue(bool(torch.isfinite(output.loss)))
         self.model.zero_grad(set_to_none=True)
         output.loss.backward()
-        gradients = [parameter.grad for parameter in self.model.parameters() if parameter.grad is not None]
+        gradients = [
+            parameter.grad for parameter in self.model.parameters() if parameter.grad is not None
+        ]
         self.assertTrue(gradients)
         self.assertTrue(all(bool(torch.isfinite(grad).all()) for grad in gradients))
 
@@ -38,7 +51,10 @@ class TransformerLMTest(unittest.TestCase):
         with torch.no_grad():
             first_logits = self.model(first).logits
             second_logits = self.model(second).logits
-        self.assertTrue(torch.allclose(first_logits[:, :8], second_logits[:, :8], atol=1e-6, rtol=1e-5))
+        self.assertTrue(
+            torch.allclose(first_logits[:, :8], second_logits[:, :8], atol=1e-6, rtol=1e-5)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

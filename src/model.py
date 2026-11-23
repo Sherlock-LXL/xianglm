@@ -9,10 +9,12 @@ from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 from src.config import ModelConfig, estimate_parameter_count
 
+
 @dataclass
 class ModelOutput:
     logits: Tensor
     loss: Tensor | None = None
+
 
 class RMSNorm(nn.Module):
     def __init__(self, d_model: int, eps: float) -> None:
@@ -28,6 +30,7 @@ class RMSNorm(nn.Module):
         normalized = normalized.to(dtype=input_dtype)
         return normalized * self.weight
 
+
 class RotaryEmbedding(nn.Module):
     def __init__(self, head_dim: int, max_sequence_length: int, theta: float) -> None:
         super().__init__()
@@ -35,7 +38,9 @@ class RotaryEmbedding(nn.Module):
             raise ValueError("RoPE要求head_dim为偶数")
         self.head_dim = head_dim
         self.max_sequence_length = max_sequence_length
-        inverse_frequency = 1.0 / (theta ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim))
+        inverse_frequency = 1.0 / (
+            theta ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim)
+        )
         positions = torch.arange(max_sequence_length, dtype=torch.float32)
         frequencies = torch.outer(positions, inverse_frequency)
         embedding = torch.cat((frequencies, frequencies), dim=-1)
@@ -50,12 +55,25 @@ class RotaryEmbedding(nn.Module):
     def forward(self, query: Tensor, key: Tensor) -> tuple[Tensor, Tensor]:
         sequence_length = query.size(-2)
         if sequence_length > self.max_sequence_length:
-            raise ValueError(f"输入序列超过RoPE缓存长度：{sequence_length} > {self.max_sequence_length}")
-        cosine = self.cos_cached[:sequence_length].to(device=query.device, dtype=query.dtype).unsqueeze(0).unsqueeze(0)
-        sine = self.sin_cached[:sequence_length].to(device=query.device, dtype=query.dtype).unsqueeze(0).unsqueeze(0)
+            raise ValueError(
+                f"输入序列超过RoPE缓存长度：{sequence_length} > {self.max_sequence_length}"
+            )
+        cosine = (
+            self.cos_cached[:sequence_length]
+            .to(device=query.device, dtype=query.dtype)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
+        sine = (
+            self.sin_cached[:sequence_length]
+            .to(device=query.device, dtype=query.dtype)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
         rotated_query = query * cosine + self.rotate_half(query) * sine
         rotated_key = key * cosine + self.rotate_half(key) * sine
         return rotated_query, rotated_key
+
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
@@ -67,7 +85,11 @@ class CausalSelfAttention(nn.Module):
         self.qkv_projection = nn.Linear(config.d_model, 3 * config.d_model, bias=config.use_bias)
         self.output_projection = nn.Linear(config.d_model, config.d_model, bias=config.use_bias)
         self.residual_dropout = nn.Dropout(config.dropout)
-        self.rope = RotaryEmbedding(head_dim=config.head_dim, max_sequence_length=config.context_length, theta=config.rope_theta)
+        self.rope = RotaryEmbedding(
+            head_dim=config.head_dim,
+            max_sequence_length=config.context_length,
+            theta=config.rope_theta,
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         batch_size = x.size(0)
@@ -80,10 +102,22 @@ class CausalSelfAttention(nn.Module):
         value = value.transpose(1, 2)
         query, key = self.rope(query, key)
         attention_dropout = self.dropout if self.training else 0.0
-        attention_output = (F.scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=None, dropout_p=attention_dropout, is_causal=True))
-        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, sequence_length, self.d_model)
+        attention_output = F.scaled_dot_product_attention(
+            query=query,
+            key=key,
+            value=value,
+            attn_mask=None,
+            dropout_p=attention_dropout,
+            is_causal=True,
+        )
+        attention_output = (
+            attention_output.transpose(1, 2)
+            .contiguous()
+            .view(batch_size, sequence_length, self.d_model)
+        )
         output = self.output_projection(attention_output)
         return self.residual_dropout(output)
+
 
 class SwiGLU(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
@@ -100,6 +134,7 @@ class SwiGLU(nn.Module):
         output = self.down_projection(hidden)
         return self.dropout(output)
 
+
 class TransformerBlock(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
@@ -112,6 +147,7 @@ class TransformerBlock(nn.Module):
         x = x + self.attention(self.attention_norm(x))
         x = x + self.feed_forward(self.feed_forward_norm(x))
         return x
+
 
 class TransformerLM(nn.Module):
     def __init__(self, config: ModelConfig, *, gradient_checkpointing: bool = False) -> None:
@@ -151,7 +187,9 @@ class TransformerLM(nn.Module):
         actual = self.parameter_count()
         expected = estimate_parameter_count(self.config)
         if actual != expected:
-            raise RuntimeError(f"模型实际参数量与config估算不一致：\n实际：{actual:,}\n预计：{expected:,}")
+            raise RuntimeError(
+                f"模型实际参数量与config估算不一致：\n实际：{actual:,}\n预计：{expected:,}"
+            )
 
     def parameter_count(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters())
@@ -166,24 +204,32 @@ class TransformerLM(nn.Module):
         if sequence_length == 0:
             raise ValueError("输入序列不能为空")
         if sequence_length > self.config.context_length:
-            raise ValueError(f"输入序列超过模型上下文长度：{sequence_length} > {self.config.context_length}")
+            raise ValueError(
+                f"输入序列超过模型上下文长度：{sequence_length} > {self.config.context_length}"
+            )
         if input_ids.dtype not in {torch.int32, torch.int64}:
             input_ids = input_ids.long()
         if labels is not None:
             if labels.shape != input_ids.shape:
-                raise ValueError(f"labels形状必须与input_ids一致：{labels.shape} != {input_ids.shape}")
+                raise ValueError(
+                    f"labels形状必须与input_ids一致：{labels.shape} != {input_ids.shape}"
+                )
             if labels.dtype != torch.int64:
                 labels = labels.long()
         x = self.token_embedding(input_ids)
         x = self.embedding_dropout(x)
         for block in self.blocks:
             if self.gradient_checkpointing and self.training:
-                x = activation_checkpoint(block, x, use_reentrant=False, preserve_rng_state=self.config.dropout > 0.0)
+                x = activation_checkpoint(
+                    block, x, use_reentrant=False, preserve_rng_state=self.config.dropout > 0.0
+                )
             else:
                 x = block(x)
         x = self.final_norm(x)
         logits = self.lm_head(x)
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits.reshape(-1, self.config.vocab_size), labels.reshape(-1), ignore_index=-100)
+            loss = F.cross_entropy(
+                logits.reshape(-1, self.config.vocab_size), labels.reshape(-1), ignore_index=-100
+            )
         return ModelOutput(logits=logits, loss=loss)

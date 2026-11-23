@@ -33,6 +33,7 @@ REVISION = "master"
 
 METADATA_FILENAMES = frozenset({"README.md", "dataset_infos.json"})
 
+
 @dataclass(frozen=True)
 class SourceSpec:
     key: str
@@ -54,6 +55,7 @@ class SourceSpec:
     @property
     def local_dir(self) -> Path:
         return RAW_ROOT / self.local_name
+
 
 SOURCES = (
     SourceSpec(
@@ -137,12 +139,17 @@ LOCAL_SOURCE_PATHS = {}
 
 RECOMMENDED_MIXTURE = {
     "target_examples": 120_000,
-    "downloaded_sources": {source.key: {"weight": source.planned_weight, "examples": source.planned_examples} for source in SOURCES},
+    "downloaded_sources": {
+        source.key: {"weight": source.planned_weight, "examples": source.planned_examples}
+        for source in SOURCES
+    },
     "note": "比例仅用于下一阶段清洗混合，不代表本脚本会从原始仓库裁样。各项相加为 120000 条左右，适合先为 200M 模型制作 SFT 数据。",
 }
 
+
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat()
+
 
 def format_bytes(num_bytes: int) -> str:
     units = ("B", "KiB", "MiB", "GiB", "TiB")
@@ -153,8 +160,10 @@ def format_bytes(num_bytes: int) -> str:
         size /= 1024
     raise RuntimeError("无法格式化文件大小")
 
+
 def normalize_path(path: str) -> str:
     return path.replace("\\", "/").lstrip("/")
+
 
 def ensure_directories() -> None:
     RAW_ROOT.mkdir(parents=True, exist_ok=True)
@@ -164,16 +173,19 @@ def ensure_directories() -> None:
     for source in SOURCES:
         source.local_dir.mkdir(parents=True, exist_ok=True)
 
+
 def atomic_write_json(path: Path, content: dict[str, Any]) -> None:
     temporary_path = path.with_suffix(path.suffix + ".tmp")
     temporary_path.write_text(json.dumps(content, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temporary_path, path)
 
+
 def entry_path(entry: dict[str, Any]) -> str | None:
-    raw_path = (entry.get("Path") or entry.get("path") or entry.get("Name") or entry.get("name"))
+    raw_path = entry.get("Path") or entry.get("path") or entry.get("Name") or entry.get("name")
     if not raw_path:
         return None
     return normalize_path(str(raw_path))
+
 
 def entry_size(entry: dict[str, Any]) -> int | None:
     raw_size = entry.get("Size")
@@ -185,28 +197,37 @@ def entry_size(entry: dict[str, Any]) -> int | None:
         return None
     return size if size > 0 else None
 
+
 def entry_sha256(entry: dict[str, Any]) -> str | None:
     value = entry.get("Sha256") or entry.get("sha256")
     return str(value) if value else None
 
+
 def entry_is_file(entry: dict[str, Any]) -> bool:
     entry_type = str(entry.get("Type") or entry.get("type") or "blob")
     return entry_type != "tree"
+
 
 def matches_data_file(path: str, source: SourceSpec) -> bool:
     if source.exact_files and path not in source.exact_files:
         return False
     if source.prefixes and not any(path.startswith(prefix) for prefix in source.prefixes):
         return False
-    if source.excluded_prefixes and any(path.startswith(prefix) for prefix in source.excluded_prefixes):
+    if source.excluded_prefixes and any(
+        path.startswith(prefix) for prefix in source.excluded_prefixes
+    ):
         return False
     lowercase = path.lower()
-    if source.suffixes and not any(lowercase.endswith(suffix.lower()) for suffix in source.suffixes):
+    if source.suffixes and not any(
+        lowercase.endswith(suffix.lower()) for suffix in source.suffixes
+    ):
         return False
     return True
 
+
 def matches_metadata_file(path: str) -> bool:
     return "/" not in path and path in METADATA_FILENAMES
+
 
 def list_source_files(api: HubApi, source: SourceSpec) -> list[dict[str, Any]]:
     print()
@@ -216,7 +237,9 @@ def list_source_files(api: HubApi, source: SourceSpec) -> list[dict[str, Any]]:
     entries_by_path: dict[str, dict[str, Any]] = {}
     for root_path in source.root_paths:
         print(f"读取目录：{root_path}")
-        entries = api.legacy.list_dataset_files_paginated(repo_id=source.repo_id, revision=REVISION, page_size=1000, root_path=root_path)
+        entries = api.legacy.list_dataset_files_paginated(
+            repo_id=source.repo_id, revision=REVISION, page_size=1000, root_path=root_path
+        )
         print(f"目录返回：{len(entries):,} 项")
         for entry in entries:
             if not entry_is_file(entry):
@@ -225,13 +248,24 @@ def list_source_files(api: HubApi, source: SourceSpec) -> list[dict[str, Any]]:
             size_bytes = entry_size(entry)
             if path is None or size_bytes is None:
                 continue
-            entries_by_path[path] = {"path": path, "size_bytes": size_bytes, "sha256": entry_sha256(entry), "revision": entry.get("Revision") or entry.get("revision")}
-    selected = [item for path, item in entries_by_path.items() if matches_data_file(path, source) or matches_metadata_file(path)]
+            entries_by_path[path] = {
+                "path": path,
+                "size_bytes": size_bytes,
+                "sha256": entry_sha256(entry),
+                "revision": entry.get("Revision") or entry.get("revision"),
+            }
+    selected = [
+        item
+        for path, item in entries_by_path.items()
+        if matches_data_file(path, source) or matches_metadata_file(path)
+    ]
     selected.sort(key=lambda item: item["path"])
     data_files = [item for item in selected if matches_data_file(item["path"], source)]
     if not data_files:
         available_preview = "\n".join(sorted(entries_by_path)[:30])
-        raise RuntimeError(f"{source.name} 没有匹配到数据文件。\n仓库路径预览：\n{available_preview}")
+        raise RuntimeError(
+            f"{source.name} 没有匹配到数据文件。\n仓库路径预览：\n{available_preview}"
+        )
     data_size = sum(item["size_bytes"] for item in data_files)
     metadata_count = len(selected) - len(data_files)
     print(f"数据文件：{len(data_files):,}")
@@ -239,16 +273,21 @@ def list_source_files(api: HubApi, source: SourceSpec) -> list[dict[str, Any]]:
     print(f"数据大小：{format_bytes(data_size)}")
     return selected
 
+
 def local_file_path(source: SourceSpec, item: dict[str, Any]) -> Path:
     return source.local_dir / Path(item["path"])
+
 
 def is_complete_local_file(source: SourceSpec, item: dict[str, Any]) -> bool:
     path = local_file_path(source, item)
     return path.is_file() and path.stat().st_size == item["size_bytes"]
 
+
 def serialize_source_plan(source: SourceSpec, files: list[dict[str, Any]]) -> dict[str, Any]:
     total_size = sum(item["size_bytes"] for item in files)
-    complete_size = sum(item["size_bytes"] for item in files if is_complete_local_file(source, item))
+    complete_size = sum(
+        item["size_bytes"] for item in files if is_complete_local_file(source, item)
+    )
     return {
         "key": source.key,
         "name": source.name,
@@ -269,6 +308,7 @@ def serialize_source_plan(source: SourceSpec, files: list[dict[str, Any]]) -> di
         "files": files,
     }
 
+
 def inspect_local_sources() -> dict[str, dict[str, Any]]:
     result = {}
     for name, path in LOCAL_SOURCE_PATHS.items():
@@ -282,7 +322,10 @@ def inspect_local_sources() -> dict[str, dict[str, Any]]:
         }
     return result
 
-def build_plan(api: HubApi, selected_sources: tuple[SourceSpec, ...]) -> tuple[list[tuple[SourceSpec, list[dict[str, Any]]]], dict[str, Any]]:
+
+def build_plan(
+    api: HubApi, selected_sources: tuple[SourceSpec, ...]
+) -> tuple[list[tuple[SourceSpec, list[dict[str, Any]]]], dict[str, Any]]:
     runtime_plan = []
     serialized_sources = []
     for source in selected_sources:
@@ -312,6 +355,7 @@ def build_plan(api: HubApi, selected_sources: tuple[SourceSpec, ...]) -> tuple[l
     }
     return runtime_plan, serialized_plan
 
+
 def check_disk_space(plan: dict[str, Any]) -> None:
     remaining_bytes = int(plan["remaining_bytes"])
     free_bytes = shutil.disk_usage(POST_TRAINING_ROOT).free
@@ -323,20 +367,35 @@ def check_disk_space(plan: dict[str, Any]) -> None:
     print(f"尚需下载：{format_bytes(remaining_bytes)}")
     print(f"安全预留：{FREE_SPACE_RESERVE_GIB} GiB")
     if free_bytes < required_bytes:
-        raise RuntimeError(f"磁盘空间不足。至少需要 {format_bytes(required_bytes)}，当前只有 {format_bytes(free_bytes)}。")
+        raise RuntimeError(
+            f"磁盘空间不足。至少需要 {format_bytes(required_bytes)}，当前只有 {format_bytes(free_bytes)}。"
+        )
+
 
 def download_file(source: SourceSpec, item: dict[str, Any]) -> str:
     if is_complete_local_file(source, item):
         return item["path"]
     worker_api = HubApi()
-    worker_api.download_file(repo_id=source.repo_id, repo_type="dataset", file_path=item["path"], revision=REVISION, local_dir=str(source.local_dir), expected_sha256=item.get("sha256"))
+    worker_api.download_file(
+        repo_id=source.repo_id,
+        repo_type="dataset",
+        file_path=item["path"],
+        revision=REVISION,
+        local_dir=str(source.local_dir),
+        expected_sha256=item.get("sha256"),
+    )
     path = local_file_path(source, item)
     actual_size = path.stat().st_size if path.exists() else 0
     if actual_size != item["size_bytes"]:
-        raise RuntimeError(f"{item['path']} 下载后大小错误：预期 {item['size_bytes']}，实际 {actual_size}")
+        raise RuntimeError(
+            f"{item['path']} 下载后大小错误：预期 {item['size_bytes']}，实际 {actual_size}"
+        )
     return item["path"]
 
-def download_source(source: SourceSpec, files: list[dict[str, Any]], workers: int) -> dict[str, Any]:
+
+def download_source(
+    source: SourceSpec, files: list[dict[str, Any]], workers: int
+) -> dict[str, Any]:
     print()
     print("=" * 72)
     print(f"开始下载：{source.name}")
@@ -355,7 +414,9 @@ def download_source(source: SourceSpec, files: list[dict[str, Any]], workers: in
         failures: list[tuple[dict[str, Any], Exception]] = []
         worker_count = min(workers, len(pending))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_to_item = {executor.submit(download_file, source, item): item for item in pending}
+            future_to_item = {
+                executor.submit(download_file, source, item): item for item in pending
+            }
             for future in as_completed(future_to_item):
                 item = future_to_item[future]
                 try:
@@ -374,17 +435,40 @@ def download_source(source: SourceSpec, files: list[dict[str, Any]], workers: in
             time.sleep(wait_seconds)
     elapsed = time.perf_counter() - started
     if pending:
-        error_message = "; ".join(f"{item['path']}: {type(error).__name__}: {error}" for item, error in last_errors)
-        return {"status": "download_failed", "elapsed_seconds": elapsed, "pending_files": [item["path"] for item in pending], "error_message": error_message}
+        error_message = "; ".join(
+            f"{item['path']}: {type(error).__name__}: {error}" for item, error in last_errors
+        )
+        return {
+            "status": "download_failed",
+            "elapsed_seconds": elapsed,
+            "pending_files": [item["path"] for item in pending],
+            "error_message": error_message,
+        }
     invalid_files = []
     for item in files:
         path = local_file_path(source, item)
         actual_size = path.stat().st_size if path.exists() else 0
         if actual_size != item["size_bytes"]:
-            invalid_files.append({"path": item["path"], "expected_size": item["size_bytes"], "actual_size": actual_size})
+            invalid_files.append(
+                {
+                    "path": item["path"],
+                    "expected_size": item["size_bytes"],
+                    "actual_size": actual_size,
+                }
+            )
     if invalid_files:
-        return {"status": "validation_failed", "elapsed_seconds": elapsed, "invalid_files": invalid_files}
-    return {"status": "complete", "elapsed_seconds": elapsed, "file_count": len(files), "total_size_bytes": sum(item["size_bytes"] for item in files)}
+        return {
+            "status": "validation_failed",
+            "elapsed_seconds": elapsed,
+            "invalid_files": invalid_files,
+        }
+    return {
+        "status": "complete",
+        "elapsed_seconds": elapsed,
+        "file_count": len(files),
+        "total_size_bytes": sum(item["size_bytes"] for item in files),
+    }
+
 
 def preview_value(value: Any) -> Any:
     if isinstance(value, str):
@@ -395,11 +479,19 @@ def preview_value(value: Any) -> Any:
         return {str(key): preview_value(item) for key, item in list(value.items())[:10]}
     return value
 
+
 def inspect_parquet(path: Path) -> dict[str, Any]:
     parquet_file = pq.ParquetFile(path)
     first_batch = next(parquet_file.iter_batches(batch_size=1))
     first_row = first_batch.to_pylist()[0]
-    return {"path": str(path), "format": "parquet", "rows": parquet_file.metadata.num_rows, "columns": parquet_file.schema_arrow.names, "first_row_preview": preview_value(first_row)}
+    return {
+        "path": str(path),
+        "format": "parquet",
+        "rows": parquet_file.metadata.num_rows,
+        "columns": parquet_file.schema_arrow.names,
+        "first_row_preview": preview_value(first_row),
+    }
+
 
 def inspect_jsonl(path: Path) -> dict[str, Any]:
     first_record: Any = None
@@ -411,7 +503,13 @@ def inspect_jsonl(path: Path) -> dict[str, Any]:
             break
         else:
             raise RuntimeError(f"JSONL 文件没有有效记录：{path}")
-    return {"path": str(path), "format": "jsonl", "first_record_line": line_number, "first_record_preview": preview_value(first_record)}
+    return {
+        "path": str(path),
+        "format": "jsonl",
+        "first_record_line": line_number,
+        "first_record_preview": preview_value(first_record),
+    }
+
 
 def inspect_source(source: SourceSpec, files: list[dict[str, Any]]) -> dict[str, Any]:
     data_items = [item for item in files if matches_data_file(item["path"], source)]
@@ -423,18 +521,33 @@ def inspect_source(source: SourceSpec, files: list[dict[str, Any]]) -> dict[str,
         return inspect_jsonl(first_path)
     return {"path": str(first_path), "format": "unknown"}
 
+
 def validate_existing_source(source: SourceSpec, files: list[dict[str, Any]]) -> dict[str, Any]:
     invalid_files = []
     for item in files:
         path = local_file_path(source, item)
         actual_size = path.stat().st_size if path.exists() else 0
         if actual_size != item["size_bytes"]:
-            invalid_files.append({"path": item["path"], "expected_size": item["size_bytes"], "actual_size": actual_size})
+            invalid_files.append(
+                {
+                    "path": item["path"],
+                    "expected_size": item["size_bytes"],
+                    "actual_size": actual_size,
+                }
+            )
     if invalid_files:
         return {"status": "validation_failed", "invalid_files": invalid_files}
-    return {"status": "complete", "file_count": len(files), "total_size_bytes": sum(item["size_bytes"] for item in files), "sample_inspection": inspect_source(source, files)}
+    return {
+        "status": "complete",
+        "file_count": len(files),
+        "total_size_bytes": sum(item["size_bytes"] for item in files),
+        "sample_inspection": inspect_source(source, files),
+    }
 
-def build_final_manifest(plan: dict[str, Any], results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+
+def build_final_manifest(
+    plan: dict[str, Any], results: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     source_entries = []
     for planned_source in plan["sources"]:
         entry = dict(planned_source)
@@ -449,19 +562,40 @@ def build_final_manifest(plan: dict[str, Any], results: dict[str, dict[str, Any]
         "recommended_mixture": RECOMMENDED_MIXTURE,
     }
 
+
 def resolve_selected_sources(keys: list[str] | None) -> tuple[SourceSpec, ...]:
     if not keys:
         return SOURCES
     ordered_keys = list(dict.fromkeys(keys))
     return tuple(SOURCE_BY_KEY[key] for key in ordered_keys)
 
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="下载 XiangLM 第一阶段 SFT 原始数据，并生成可追溯 manifest")
-    parser.add_argument("--source", action="append", choices=tuple(SOURCE_BY_KEY), help="只处理指定来源；可以重复传入。默认处理全部来源。")
-    parser.add_argument("--plan-only", action="store_true", help="只生成计划、统计大小和检查磁盘，不下载文件。")
-    parser.add_argument("--verify-only", action="store_true", help="只按远端文件大小验证已下载文件，并读取每个来源的一个样本。")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"同一来源并发下载数，默认 {DEFAULT_WORKERS}。")
+    parser = argparse.ArgumentParser(
+        description="下载 XiangLM 第一阶段 SFT 原始数据，并生成可追溯 manifest"
+    )
+    parser.add_argument(
+        "--source",
+        action="append",
+        choices=tuple(SOURCE_BY_KEY),
+        help="只处理指定来源；可以重复传入。默认处理全部来源。",
+    )
+    parser.add_argument(
+        "--plan-only", action="store_true", help="只生成计划、统计大小和检查磁盘，不下载文件。"
+    )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="只按远端文件大小验证已下载文件，并读取每个来源的一个样本。",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=f"同一来源并发下载数，默认 {DEFAULT_WORKERS}。",
+    )
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -508,7 +642,11 @@ def main() -> None:
             atomic_write_json(FINAL_MANIFEST_PATH, partial_manifest)
             raise SystemExit(130)
         except Exception as error:
-            result = {"status": "unexpected_error", "error_type": type(error).__name__, "error_message": str(error)}
+            result = {
+                "status": "unexpected_error",
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+            }
         results[source.key] = result
         partial_manifest = build_final_manifest(plan, results)
         atomic_write_json(FINAL_MANIFEST_PATH, partial_manifest)
@@ -524,6 +662,7 @@ def main() -> None:
     if not final_manifest["all_complete"]:
         raise RuntimeError("仍有来源未完成。修复网络问题后重新运行即可续传。")
     print("全部来源下载并完成基础验收。下一步是统一格式、清洗和分层抽样。")
+
 
 if __name__ == "__main__":
     main()

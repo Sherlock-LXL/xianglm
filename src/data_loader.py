@@ -12,11 +12,13 @@ from torch import Tensor
 
 from src.config import DataConfig
 
+
 @dataclass
 class TokenBatch:
     input_ids: Tensor
     labels: Tensor
     source_counts: dict[str, int]
+
 
 @dataclass(frozen=True)
 class ShardInfo:
@@ -27,6 +29,7 @@ class ShardInfo:
 
     def valid_window_count(self, context_length: int) -> int:
         return max(0, self.token_count - context_length)
+
 
 class MemmapCache:
     def __init__(self, dtype: np.dtype, max_open_files: int = 8) -> None:
@@ -51,8 +54,11 @@ class MemmapCache:
     def close(self) -> None:
         self._cache.clear()
 
+
 class SourceShardPool:
-    def __init__(self, source: str, split: str, shards: list[ShardInfo], context_length: int) -> None:
+    def __init__(
+        self, source: str, split: str, shards: list[ShardInfo], context_length: int
+    ) -> None:
         self.source = source
         self.split = split
         self.context_length = context_length
@@ -77,8 +83,17 @@ class SourceShardPool:
         local_start = global_window - previous_cumulative
         return self.shards[shard_index], local_start
 
+
 class MixedPretrainingLoader:
-    def __init__(self, data_config: DataConfig, context_length: int, split: str, *, seed: int, max_open_files: int = 8) -> None:
+    def __init__(
+        self,
+        data_config: DataConfig,
+        context_length: int,
+        split: str,
+        *,
+        seed: int,
+        max_open_files: int = 8,
+    ) -> None:
         data_config.validate()
         if context_length <= 0:
             raise ValueError("context_length必须为正数")
@@ -113,8 +128,17 @@ class MixedPretrainingLoader:
                 expected_bytes = int(shard_entry["tokens"]) * self.dtype.itemsize
                 if shard_path.stat().st_size != expected_bytes:
                     raise RuntimeError(f"Token分片大小错误：{shard_path}")
-                shards.append(ShardInfo(source=source_name, split=split, path=shard_path, token_count=int(shard_entry["tokens"])))
-            self.pools[source_name] = (SourceShardPool(source=source_name, split=split, shards=shards, context_length=context_length))
+                shards.append(
+                    ShardInfo(
+                        source=source_name,
+                        split=split,
+                        path=shard_path,
+                        token_count=int(shard_entry["tokens"]),
+                    )
+                )
+            self.pools[source_name] = SourceShardPool(
+                source=source_name, split=split, shards=shards, context_length=context_length
+            )
         self.source_sample_counts = {name: 0 for name in self.source_names}
 
     def _sample_source(self) -> str:
@@ -130,7 +154,9 @@ class MixedPretrainingLoader:
         end = start + self.context_length + 1
         return np.array(mapped[start:end], dtype=np.int64, copy=True)
 
-    def next_batch(self, batch_size: int, *, device: torch.device | None = None, source_name: str | None = None) -> TokenBatch:
+    def next_batch(
+        self, batch_size: int, *, device: torch.device | None = None, source_name: str | None = None
+    ) -> TokenBatch:
         if batch_size <= 0:
             raise ValueError("batch_size必须为正数")
         sequences = np.empty((batch_size, self.context_length + 1), dtype=np.int64)
@@ -149,10 +175,20 @@ class MixedPretrainingLoader:
         if device is not None:
             input_ids = input_ids.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
-        return TokenBatch(input_ids=input_ids, labels=labels, source_counts={name: count for name, count in source_counts.items() if count > 0})
+        return TokenBatch(
+            input_ids=input_ids,
+            labels=labels,
+            source_counts={name: count for name, count in source_counts.items() if count > 0},
+        )
 
     def state_dict(self) -> dict[str, Any]:
-        return {"seed": self.seed, "split": self.split, "context_length": self.context_length, "rng_state": self.rng.getstate(), "source_sample_counts": dict(self.source_sample_counts)}
+        return {
+            "seed": self.seed,
+            "split": self.split,
+            "context_length": self.context_length,
+            "rng_state": self.rng.getstate(),
+            "source_sample_counts": dict(self.source_sample_counts),
+        }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
         if state["split"] != self.split:

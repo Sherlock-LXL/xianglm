@@ -30,6 +30,7 @@ RETRY_WAIT_SECONDS = 30
 FREE_SPACE_RESERVE_GIB = 10
 RANDOM_SEED = 20260822
 
+
 @dataclass(frozen=True)
 class SourceSpec:
     name: str
@@ -46,9 +47,11 @@ class SourceSpec:
     @property
     def local_dir(self) -> Path:
         return DOWNLOAD_ROOT / self.local_name
+
     @property
     def target_bytes(self) -> int:
         return int(self.target_gib * GIB)
+
 
 SOURCES = [
     SourceSpec(
@@ -98,6 +101,7 @@ SOURCES = [
     ),
 ]
 
+
 def format_bytes(num_bytes: int) -> str:
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
     size = float(num_bytes)
@@ -107,6 +111,7 @@ def format_bytes(num_bytes: int) -> str:
         size /= 1024
     raise RuntimeError("无法格式化文件大小")
 
+
 def ensure_directories() -> None:
     DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     MANIFEST_ROOT.mkdir(parents=True, exist_ok=True)
@@ -114,8 +119,10 @@ def ensure_directories() -> None:
     for source in SOURCES:
         source.local_dir.mkdir(parents=True, exist_ok=True)
 
+
 def normalize_path(path: str) -> str:
     return path.replace("\\", "/").lstrip("/")
+
 
 def matches_source(path: str, source: SourceSpec) -> bool:
     normalized = normalize_path(path)
@@ -133,6 +140,7 @@ def matches_source(path: str, source: SourceSpec) -> bool:
         return False
     return True
 
+
 def list_candidate_files(api: HubApi, source: SourceSpec) -> list[dict]:
     print()
     print("=" * 72)
@@ -144,7 +152,9 @@ def list_candidate_files(api: HubApi, source: SourceSpec) -> list[dict]:
     entries_by_path: dict[str, dict] = {}
     for root in roots:
         print(f"分页读取目录：{root}")
-        raw_entries = (api.legacy.list_dataset_files_paginated(repo_id=source.repo_id, revision="master", page_size=25, root_path=root))
+        raw_entries = api.legacy.list_dataset_files_paginated(
+            repo_id=source.repo_id, revision="master", page_size=25, root_path=root
+        )
         print(f"目录返回条目数：{len(raw_entries):,}")
         for entry in raw_entries:
             entry_type = entry.get("Type") or entry.get("type") or "blob"
@@ -161,23 +171,32 @@ def list_candidate_files(api: HubApi, source: SourceSpec) -> list[dict]:
             if size_bytes <= 0:
                 continue
             normalized_path = normalize_path(str(path))
-            entries_by_path[normalized_path] = {"path": normalized_path, "size_bytes": size_bytes, "sha256": entry.get("Sha256") or entry.get("sha256")}
+            entries_by_path[normalized_path] = {
+                "path": normalized_path,
+                "size_bytes": size_bytes,
+                "sha256": entry.get("Sha256") or entry.get("sha256"),
+            }
     candidates = [item for item in entries_by_path.values() if matches_source(item["path"], source)]
     candidates.sort(key=lambda item: item["path"])
     if not candidates:
         sample_paths = list(entries_by_path.keys())[:30]
-        raise RuntimeError(f"{source.name}没有找到匹配文件。\n仓库前30个路径：\n" + "\n".join(sample_paths))
+        raise RuntimeError(
+            f"{source.name}没有找到匹配文件。\n仓库前30个路径：\n" + "\n".join(sample_paths)
+        )
     total_available = sum(item["size_bytes"] for item in candidates)
     print(f"候选文件数：{len(candidates):,}")
     print(f"候选文件总大小：{format_bytes(total_available)}")
     if total_available < source.target_bytes:
         raise RuntimeError(
-            f"{source.name}候选文件容量不足：需要{format_bytes(source.target_bytes)}，只有{format_bytes(total_available)}。")
+            f"{source.name}候选文件容量不足：需要{format_bytes(source.target_bytes)}，只有{format_bytes(total_available)}。"
+        )
     return candidates
+
 
 def is_complete_local_file(source: SourceSpec, item: dict) -> bool:
     local_path = source.local_dir / Path(item["path"])
     return local_path.is_file() and local_path.stat().st_size == item["size_bytes"]
+
 
 def select_files(source: SourceSpec, candidates: list[dict], seed: int) -> list[dict]:
     completed = [item for item in candidates if is_complete_local_file(source, item)]
@@ -199,6 +218,7 @@ def select_files(source: SourceSpec, candidates: list[dict], seed: int) -> list[
     print(f"已存在完整文件：{sum(is_complete_local_file(source, item) for item in selected)}")
     return selected
 
+
 def build_download_plan(api: HubApi) -> list[dict]:
     plan = []
     for index, source in enumerate(SOURCES):
@@ -207,13 +227,16 @@ def build_download_plan(api: HubApi) -> list[dict]:
         plan.append({"source": source, "files": selected})
     return plan
 
+
 def serialize_plan(plan: list[dict]) -> dict:
     sources = []
     for item in plan:
         source: SourceSpec = item["source"]
         selected_files: list[dict] = item["files"]
         selected_size = sum(file["size_bytes"] for file in selected_files)
-        existing_size = sum(file["size_bytes"] for file in selected_files if is_complete_local_file(source, file))
+        existing_size = sum(
+            file["size_bytes"] for file in selected_files if is_complete_local_file(source, file)
+        )
         sources.append(
             {
                 "name": source.name,
@@ -247,10 +270,12 @@ def serialize_plan(plan: list[dict]) -> dict:
         "sources": sources,
     }
 
+
 def save_json(path: Path, content: dict) -> None:
     temporary_path = path.with_suffix(path.suffix + ".tmp")
     temporary_path.write_text(json.dumps(content, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temporary_path, path)
+
 
 def check_disk_space(plan_dict: dict) -> None:
     free_bytes = shutil.disk_usage(DATA_ROOT).free
@@ -263,18 +288,30 @@ def check_disk_space(plan_dict: dict) -> None:
     print(f"尚需下载：{format_bytes(remaining_bytes)}")
     print(f"安全预留：{FREE_SPACE_RESERVE_GIB} GiB")
     if free_bytes < required_bytes:
-        raise RuntimeError(f"磁盘空间不足。至少还需要：{format_bytes(required_bytes)}，当前只有：{format_bytes(free_bytes)}。")
+        raise RuntimeError(
+            f"磁盘空间不足。至少还需要：{format_bytes(required_bytes)}，当前只有：{format_bytes(free_bytes)}。"
+        )
+
 
 def download_selected_file(source: SourceSpec, item: dict) -> str:
     if is_complete_local_file(source, item):
         return item["path"]
     worker_api = HubApi()
-    worker_api.download_file(repo_id=source.repo_id, repo_type="dataset", file_path=item["path"], local_dir=str(source.local_dir), expected_sha256=item.get("sha256") or None)
+    worker_api.download_file(
+        repo_id=source.repo_id,
+        repo_type="dataset",
+        file_path=item["path"],
+        local_dir=str(source.local_dir),
+        expected_sha256=item.get("sha256") or None,
+    )
     if not is_complete_local_file(source, item):
         local_path = source.local_dir / Path(item["path"])
         actual_size = local_path.stat().st_size if local_path.exists() else 0
-        raise RuntimeError(f"文件下载后大小不正确：{item['path']}，预期{item['size_bytes']}字节，实际{actual_size}字节。")
+        raise RuntimeError(
+            f"文件下载后大小不正确：{item['path']}，预期{item['size_bytes']}字节，实际{actual_size}字节。"
+        )
     return item["path"]
+
 
 def download_one_source(api: HubApi, source: SourceSpec, files: list[dict]) -> dict:
     del api
@@ -300,7 +337,9 @@ def download_one_source(api: HubApi, source: SourceSpec, files: list[dict]) -> d
         failed: list[tuple[dict, Exception]] = []
         worker_count = min(MAX_WORKERS, len(pending))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_to_item = {executor.submit(download_selected_file, source, item): item for item in pending}
+            future_to_item = {
+                executor.submit(download_selected_file, source, item): item for item in pending
+            }
             for future in as_completed(future_to_item):
                 item = future_to_item[future]
                 try:
@@ -319,8 +358,15 @@ def download_one_source(api: HubApi, source: SourceSpec, files: list[dict]) -> d
             time.sleep(wait_seconds)
     elapsed = time.perf_counter() - start_time
     if pending:
-        error_message = "; ".join((f"{item['path']}: {type(error).__name__}: {error}") for item, error in last_errors)
-        return {"status": "download_failed", "error_type": "PartialDownloadError", "error_message": error_message, "elapsed_seconds": elapsed}
+        error_message = "; ".join(
+            (f"{item['path']}: {type(error).__name__}: {error}") for item, error in last_errors
+        )
+        return {
+            "status": "download_failed",
+            "error_type": "PartialDownloadError",
+            "error_message": error_message,
+            "elapsed_seconds": elapsed,
+        }
     invalid_files = []
     for item in files:
         local_path = source.local_dir / Path(item["path"])
@@ -329,11 +375,28 @@ def download_one_source(api: HubApi, source: SourceSpec, files: list[dict]) -> d
             continue
         actual_size = local_path.stat().st_size
         if actual_size != item["size_bytes"]:
-            invalid_files.append({"path": item["path"], "reason": "size_mismatch", "expected_size": item["size_bytes"], "actual_size": actual_size})
+            invalid_files.append(
+                {
+                    "path": item["path"],
+                    "reason": "size_mismatch",
+                    "expected_size": item["size_bytes"],
+                    "actual_size": actual_size,
+                }
+            )
     if invalid_files:
-        return {"status": "validation_failed", "invalid_files": invalid_files, "elapsed_seconds": elapsed}
+        return {
+            "status": "validation_failed",
+            "invalid_files": invalid_files,
+            "elapsed_seconds": elapsed,
+        }
     print(f"{source.name}完成，耗时{elapsed / 3600:.2f}小时。")
-    return {"status": "complete", "elapsed_seconds": elapsed, "file_count": len(files), "total_size_bytes": sum(item["size_bytes"] for item in files)}
+    return {
+        "status": "complete",
+        "elapsed_seconds": elapsed,
+        "file_count": len(files),
+        "total_size_bytes": sum(item["size_bytes"] for item in files),
+    }
+
 
 def inspect_parquet_sample(file_path: Path) -> dict:
     parquet_file = pq.ParquetFile(file_path)
@@ -353,6 +416,7 @@ def inspect_parquet_sample(file_path: Path) -> dict:
         "first_row_preview": preview,
     }
 
+
 def inspect_gzip_sample(file_path: Path) -> dict:
     with gzip.open(file_path, mode="rt", encoding="utf-8", errors="replace") as file:
         first_line = file.readline().strip()
@@ -364,6 +428,7 @@ def inspect_gzip_sample(file_path: Path) -> dict:
     except json.JSONDecodeError:
         parsed = first_line
     return {"path": str(file_path), "first_record_preview": parsed}
+
 
 def inspect_one_file(source: SourceSpec, files: list[dict]) -> dict | None:
     if not files:
@@ -378,13 +443,18 @@ def inspect_one_file(source: SourceSpec, files: list[dict]) -> dict | None:
         return inspect_gzip_sample(first_file)
     return {"path": str(first_file), "note": "未配置样本读取器"}
 
+
 def build_final_manifest(plan_dict: dict, results: list[dict]) -> dict:
     final_sources = []
     for planned_source, result in zip(plan_dict["sources"], results, strict=True):
         final_source = dict(planned_source)
         final_source["result"] = result
         final_sources.append(final_source)
-    successful_bytes = sum(source["selected_size_bytes"] for source in final_sources if source["result"]["status"] == "complete")
+    successful_bytes = sum(
+        source["selected_size_bytes"]
+        for source in final_sources
+        if source["result"]["status"] == "complete"
+    )
     all_complete = all(source["result"]["status"] == "complete" for source in final_sources)
     return {
         "finished_at": datetime.now().astimezone().isoformat(),
@@ -393,6 +463,7 @@ def build_final_manifest(plan_dict: dict, results: list[dict]) -> dict:
         "successful_human": format_bytes(successful_bytes),
         "sources": final_sources,
     }
+
 
 def main() -> None:
     ensure_directories()
@@ -428,9 +499,16 @@ def main() -> None:
             print("用户中断。重新运行即可断点续传。")
             raise SystemExit(130)
         except Exception as error:
-            result = {"status": "unexpected_error", "error_type": type(error).__name__, "error_message": str(error)}
+            result = {
+                "status": "unexpected_error",
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+            }
         results.append(result)
-        partial_manifest = build_final_manifest(plan_dict, results + [{"status": "not_started"} for _ in range(len(plan) - len(results))])
+        partial_manifest = build_final_manifest(
+            plan_dict,
+            results + [{"status": "not_started"} for _ in range(len(plan) - len(results))],
+        )
         save_json(FINAL_MANIFEST_PATH, partial_manifest)
     final_manifest = build_final_manifest(plan_dict, results)
     save_json(FINAL_MANIFEST_PATH, final_manifest)
@@ -447,6 +525,7 @@ def main() -> None:
         raise SystemExit(1)
     print()
     print("所有来源下载并验证完成。")
+
 
 if __name__ == "__main__":
     main()

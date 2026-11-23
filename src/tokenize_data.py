@@ -15,7 +15,14 @@ import numpy as np
 import pyarrow.parquet as pq
 from tokenizers import Tokenizer
 
-from src.inspect_data import PROJECT_ROOT, SOURCES, SourceConfig, find_source_files, make_fallback_id, normalize_text
+from src.inspect_data import (
+    PROJECT_ROOT,
+    SOURCES,
+    SourceConfig,
+    find_source_files,
+    make_fallback_id,
+    normalize_text,
+)
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")
 
@@ -40,14 +47,29 @@ MIN_FREE_DISK_BYTES = 20 * 1024**3
 PARQUET_BATCH_ROWS = 1024
 VERIFY_CHUNK_BYTES = 64 * 1024**2
 
-RECOMMENDED_TRAINING_MIXTURE = {"chinese_web": 0.60, "chinese_education": 0.25, "english_education": 0.10, "code": 0.05}
-SPECIAL_TOKEN_STRINGS = ["<|pad|>", "<|unk|>", "<|bos|>", "<|eos|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>"]
+RECOMMENDED_TRAINING_MIXTURE = {
+    "chinese_web": 0.60,
+    "chinese_education": 0.25,
+    "english_education": 0.10,
+    "code": 0.05,
+}
+SPECIAL_TOKEN_STRINGS = [
+    "<|pad|>",
+    "<|unk|>",
+    "<|bos|>",
+    "<|eos|>",
+    "<|endoftext|>",
+    "<|im_start|>",
+    "<|im_end|>",
+]
+
 
 @dataclass(frozen=True)
 class InputRecord:
     doc_id: str
     text: str
     next_cursor: dict[str, int]
+
 
 @dataclass(frozen=True)
 class PreparedRecord:
@@ -57,8 +79,10 @@ class PreparedRecord:
     split: str
     next_cursor: dict[str, int]
 
+
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat()
+
 
 def format_bytes(value: int) -> str:
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
@@ -68,6 +92,7 @@ def format_bytes(value: int) -> str:
             return f"{size:.2f} {unit}"
         size /= 1024
     return f"{size:.2f} TiB"
+
 
 def sha256_file(path: Path, chunk_size: int = 16 * 1024**2) -> str:
     digest = hashlib.sha256()
@@ -79,9 +104,13 @@ def sha256_file(path: Path, chunk_size: int = 16 * 1024**2) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
 def sha256_json(value: Any) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(payload).hexdigest()
+
 
 def atomic_write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,16 +122,22 @@ def atomic_write_json(path: Path, value: Any) -> None:
         os.fsync(file.fileno())
     os.replace(temporary_path, path)
 
+
 def relative_to_project(path: Path) -> str:
     return path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+
 
 def relative_to_output(path: Path) -> str:
     return path.resolve().relative_to(OUTPUT_ROOT.resolve()).as_posix()
 
+
 def ensure_free_disk_space() -> None:
     free_bytes = shutil.disk_usage(OUTPUT_ROOT).free
     if free_bytes < MIN_FREE_DISK_BYTES:
-        raise RuntimeError(f"磁盘剩余空间低于安全线：{format_bytes(free_bytes)}。\n为防止磁盘写满，编码已安全停止。")
+        raise RuntimeError(
+            f"磁盘剩余空间低于安全线：{format_bytes(free_bytes)}。\n为防止磁盘写满，编码已安全停止。"
+        )
+
 
 def load_tokenizers() -> tuple[Tokenizer, Tokenizer, dict[str, int]]:
     if not TOKENIZER_PATH.exists():
@@ -118,7 +153,9 @@ def load_tokenizers() -> tuple[Tokenizer, Tokenizer, dict[str, int]]:
         raise RuntimeError("词表大于 65,536，不能使用 uint16")
     tokenizer_payload = json.loads(TOKENIZER_PATH.read_text(encoding="utf-8"))
     tokenizer_payload["added_tokens"] = []
-    raw_tokenizer = Tokenizer.from_buffer(json.dumps(tokenizer_payload, ensure_ascii=False).encode("utf-8"))
+    raw_tokenizer = Tokenizer.from_buffer(
+        json.dumps(tokenizer_payload, ensure_ascii=False).encode("utf-8")
+    )
     raw_tokenizer.no_padding()
     raw_tokenizer.no_truncation()
     probe = "普通文本<|endoftext|>literal<|im_start|>测试"
@@ -126,11 +163,14 @@ def load_tokenizers() -> tuple[Tokenizer, Tokenizer, dict[str, int]]:
     reserved_ids = set(special_token_ids.values())
     accidental_reserved_ids = reserved_ids.intersection(probe_encoding.ids)
     if accidental_reserved_ids:
-        raise RuntimeError(f"普通正文 tokenizer 仍然产生了保留 token ID：{sorted(accidental_reserved_ids)}")
+        raise RuntimeError(
+            f"普通正文 tokenizer 仍然产生了保留 token ID：{sorted(accidental_reserved_ids)}"
+        )
     probe_decoded = raw_tokenizer.decode(probe_encoding.ids, skip_special_tokens=False)
     if probe_decoded != probe:
         raise RuntimeError("普通正文 tokenizer 回译测试失败")
     return control_tokenizer, raw_tokenizer, special_token_ids
+
 
 def build_runtime_config(tokenizer_sha256: str) -> dict[str, Any]:
     source_files: dict[str, list[dict[str, Any]]] = {}
@@ -141,7 +181,13 @@ def build_runtime_config(tokenizer_sha256: str) -> dict[str, Any]:
         entries: list[dict[str, Any]] = []
         for file_path in files:
             stat = file_path.stat()
-            entries.append({"path": relative_to_project(file_path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
+            entries.append(
+                {
+                    "path": relative_to_project(file_path),
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
         source_files[source.name] = entries
     return {
         "format_version": FORMAT_VERSION,
@@ -158,6 +204,7 @@ def build_runtime_config(tokenizer_sha256: str) -> dict[str, Any]:
         "source_files": source_files,
     }
 
+
 def initial_cursor(source: SourceConfig) -> dict[str, int]:
     if source.kind == "parquet":
         return {"row_group": 0, "row_offset": 0}
@@ -165,8 +212,17 @@ def initial_cursor(source: SourceConfig) -> dict[str, int]:
         return {"line_number": 0}
     raise ValueError(f"未知输入格式：{source.kind}")
 
+
 def initial_writer_state() -> dict[str, Any]:
-    return {"shard_index": 0, "tokens_in_partial": 0, "documents_in_partial": 0, "total_tokens": 0, "total_documents": 0, "completed_shards": []}
+    return {
+        "shard_index": 0,
+        "tokens_in_partial": 0,
+        "documents_in_partial": 0,
+        "total_tokens": 0,
+        "total_documents": 0,
+        "completed_shards": [],
+    }
+
 
 def create_checkpoint(runtime_config: dict[str, Any], config_fingerprint: str) -> dict[str, Any]:
     source_states: dict[str, dict[str, Any]] = {}
@@ -189,25 +245,35 @@ def create_checkpoint(runtime_config: dict[str, Any], config_fingerprint: str) -
         "sources": source_states,
     }
 
-def load_or_create_checkpoint(runtime_config: dict[str, Any], config_fingerprint: str) -> dict[str, Any]:
+
+def load_or_create_checkpoint(
+    runtime_config: dict[str, Any], config_fingerprint: str
+) -> dict[str, Any]:
     if CHECKPOINT_PATH.exists():
         checkpoint = json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
         previous_fingerprint = checkpoint.get("config_fingerprint")
         if previous_fingerprint != config_fingerprint:
-            raise RuntimeError(f"当前输入文件、tokenizer 或编码配置与 checkpoint 不一致。\n为防止混合两种数据格式，程序拒绝续跑。\n已有指纹：{previous_fingerprint}\n当前指纹：{config_fingerprint}")
+            raise RuntimeError(
+                f"当前输入文件、tokenizer 或编码配置与 checkpoint 不一致。\n为防止混合两种数据格式，程序拒绝续跑。\n已有指纹：{previous_fingerprint}\n当前指纹：{config_fingerprint}"
+            )
         print("检测到 checkpoint，将从上次提交位置继续。")
         return checkpoint
     if OUTPUT_ROOT.exists():
         existing_files = [path for path in OUTPUT_ROOT.rglob("*") if path.is_file()]
         if existing_files:
             preview = "\n".join(f"- {path}" for path in existing_files[:10])
-            raise RuntimeError(f"输出目录中已有文件，但没有 checkpoint。\n程序不会猜测这些文件是否完整，也不会覆盖：\n{preview}")
+            raise RuntimeError(
+                f"输出目录中已有文件，但没有 checkpoint。\n程序不会猜测这些文件是否完整，也不会覆盖：\n{preview}"
+            )
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     checkpoint = create_checkpoint(runtime_config, config_fingerprint)
     atomic_write_json(CHECKPOINT_PATH, checkpoint)
     return checkpoint
 
-def iter_parquet_file_records(source: SourceConfig, file_path: Path, cursor: dict[str, int]) -> Iterator[InputRecord]:
+
+def iter_parquet_file_records(
+    source: SourceConfig, file_path: Path, cursor: dict[str, int]
+) -> Iterator[InputRecord]:
     parquet_file = pq.ParquetFile(file_path)
     available_columns = set(parquet_file.schema_arrow.names)
     if "text" not in available_columns:
@@ -231,7 +297,9 @@ def iter_parquet_file_records(source: SourceConfig, file_path: Path, cursor: dic
         if required_offset > row_group_rows:
             raise RuntimeError(f"{file_path} 的 row offset 越界")
         position_in_group = 0
-        batches = parquet_file.iter_batches(batch_size=PARQUET_BATCH_ROWS, row_groups=[row_group_index], columns=columns)
+        batches = parquet_file.iter_batches(
+            batch_size=PARQUET_BATCH_ROWS, row_groups=[row_group_index], columns=columns
+        )
         for batch in batches:
             batch_start = position_in_group
             batch_end = batch_start + batch.num_rows
@@ -259,10 +327,21 @@ def iter_parquet_file_records(source: SourceConfig, file_path: Path, cursor: dic
                     continue
                 raw_id = ids[local_index] if ids is not None else None
                 absolute_row_number = row_group_bases[row_group_index] + row_offset
-                doc_id = str(raw_id) if raw_id is not None else make_fallback_id(source, file_path, absolute_row_number)
-                yield InputRecord(doc_id=doc_id, text=text, next_cursor={"row_group": next_row_group, "row_offset": next_row_offset})
+                doc_id = (
+                    str(raw_id)
+                    if raw_id is not None
+                    else make_fallback_id(source, file_path, absolute_row_number)
+                )
+                yield InputRecord(
+                    doc_id=doc_id,
+                    text=text,
+                    next_cursor={"row_group": next_row_group, "row_offset": next_row_offset},
+                )
 
-def iter_gzip_file_records(source: SourceConfig, file_path: Path, cursor: dict[str, int]) -> Iterator[InputRecord]:
+
+def iter_gzip_file_records(
+    source: SourceConfig, file_path: Path, cursor: dict[str, int]
+) -> Iterator[InputRecord]:
     start_line_number = cursor.get("line_number", 0)
     with gzip.open(file_path, mode="rt", encoding="utf-8", errors="replace") as file:
         for line_number, line in enumerate(file):
@@ -281,10 +360,19 @@ def iter_gzip_file_records(source: SourceConfig, file_path: Path, cursor: dict[s
             if not text.strip():
                 continue
             raw_id = row.get("id")
-            doc_id = str(raw_id) if raw_id is not None else make_fallback_id(source, file_path, line_number)
-            yield InputRecord(doc_id=doc_id, text=text, next_cursor={"line_number": line_number + 1})
+            doc_id = (
+                str(raw_id)
+                if raw_id is not None
+                else make_fallback_id(source, file_path, line_number)
+            )
+            yield InputRecord(
+                doc_id=doc_id, text=text, next_cursor={"line_number": line_number + 1}
+            )
 
-def iter_input_file_records(source: SourceConfig, file_path: Path, cursor: dict[str, int]) -> Iterator[InputRecord]:
+
+def iter_input_file_records(
+    source: SourceConfig, file_path: Path, cursor: dict[str, int]
+) -> Iterator[InputRecord]:
     if source.kind == "parquet":
         yield from iter_parquet_file_records(source, file_path, cursor)
         return
@@ -293,12 +381,20 @@ def iter_input_file_records(source: SourceConfig, file_path: Path, cursor: dict[
         return
     raise ValueError(f"未知输入格式：{source.kind}")
 
+
 def prepare_record(record: InputRecord) -> PreparedRecord:
     encoded_text = record.text.encode("utf-8", errors="strict")
     digest = hashlib.blake2b(encoded_text, digest_size=8).digest()
     bucket = int.from_bytes(digest, byteorder="little", signed=False) % VALIDATION_BUCKETS
     split = "validation" if bucket < VALIDATION_THRESHOLD else "train"
-    return PreparedRecord(doc_id=record.doc_id, text=record.text, utf8_bytes=len(encoded_text), split=split, next_cursor=record.next_cursor)
+    return PreparedRecord(
+        doc_id=record.doc_id,
+        text=record.text,
+        utf8_bytes=len(encoded_text),
+        split=split,
+        next_cursor=record.next_cursor,
+    )
+
 
 def iter_long_document_chunks(text: str) -> Iterator[str]:
     start = 0
@@ -315,8 +411,11 @@ def iter_long_document_chunks(text: str) -> Iterator[str]:
         yield text[start:end]
         start = end
 
+
 class ShardWriter:
-    def __init__(self, source_name: str, split: str, state: dict[str, Any], vocab_size: int) -> None:
+    def __init__(
+        self, source_name: str, split: str, state: dict[str, Any], vocab_size: int
+    ) -> None:
         self.source_name = source_name
         self.split = split
         self.state = state
@@ -354,7 +453,9 @@ class ShardWriter:
         partial_current = self._partial_path(current_index)
         if final_current.exists():
             if partial_current.exists():
-                raise RuntimeError(f"同时发现 final 和 partial：\n{final_current}\n{partial_current}")
+                raise RuntimeError(
+                    f"同时发现 final 和 partial：\n{final_current}\n{partial_current}"
+                )
             print(f"恢复未提交分片：{final_current.name}")
             os.replace(final_current, partial_current)
         for path in self.directory.glob("shard_*"):
@@ -380,12 +481,18 @@ class ShardWriter:
                 partial_current.unlink()
             return
         if not partial_current.exists():
-            raise RuntimeError(f"Checkpoint 记录了 partial token，但对应文件不存在：{partial_current}")
+            raise RuntimeError(
+                f"Checkpoint 记录了 partial token，但对应文件不存在：{partial_current}"
+            )
         actual_bytes = partial_current.stat().st_size
         if actual_bytes < expected_partial_bytes:
-            raise RuntimeError(f"Partial 文件短于 checkpoint：{partial_current}\n文件：{actual_bytes} 字节\ncheckpoint：{expected_partial_bytes} 字节")
+            raise RuntimeError(
+                f"Partial 文件短于 checkpoint：{partial_current}\n文件：{actual_bytes} 字节\ncheckpoint：{expected_partial_bytes} 字节"
+            )
         if actual_bytes > expected_partial_bytes:
-            print(f"回滚 checkpoint 之后的未提交字节：{partial_current.name}，{actual_bytes - expected_partial_bytes:,} 字节")
+            print(
+                f"回滚 checkpoint 之后的未提交字节：{partial_current.name}，{actual_bytes - expected_partial_bytes:,} 字节"
+            )
             with partial_current.open("r+b") as file:
                 file.truncate(expected_partial_bytes)
                 file.flush()
@@ -453,31 +560,57 @@ class ShardWriter:
         expected_bytes = token_count * TOKEN_BYTES
         actual_bytes = partial_path.stat().st_size
         if actual_bytes != expected_bytes:
-            raise RuntimeError(f"Partial 分片大小错误：{partial_path}\n期望：{expected_bytes}\n实际：{actual_bytes}")
+            raise RuntimeError(
+                f"Partial 分片大小错误：{partial_path}\n期望：{expected_bytes}\n实际：{actual_bytes}"
+            )
         if final_path.exists():
             raise RuntimeError(f"目标分片已经存在：{final_path}")
         os.replace(partial_path, final_path)
         checksum = sha256_file(final_path)
         document_count = int(self.state["documents_in_partial"])
-        entry = {"index": shard_index, "path": relative_to_output(final_path), "tokens": token_count, "bytes": expected_bytes, "documents": document_count, "sha256": checksum}
+        entry = {
+            "index": shard_index,
+            "path": relative_to_output(final_path),
+            "tokens": token_count,
+            "bytes": expected_bytes,
+            "documents": document_count,
+            "sha256": checksum,
+        }
         self.state["completed_shards"].append(entry)
         self.state["shard_index"] += 1
         self.state["tokens_in_partial"] = 0
         self.state["documents_in_partial"] = 0
-        print(f"完成分片：{self.source_name}/{self.split}/{final_path.name}，{token_count:,} tokens，{format_bytes(expected_bytes)}")
+        print(
+            f"完成分片：{self.source_name}/{self.split}/{final_path.name}，{token_count:,} tokens，{format_bytes(expected_bytes)}"
+        )
 
     def finalize_tail(self) -> None:
         self._finalize_current_shard()
 
-def validate_content_token_ids(token_ids: Sequence[int], doc_id: str, reserved_ids: set[int]) -> None:
+
+def validate_content_token_ids(
+    token_ids: Sequence[int], doc_id: str, reserved_ids: set[int]
+) -> None:
     accidental_ids = reserved_ids.intersection(token_ids)
     if accidental_ids:
-        raise RuntimeError(f"普通正文产生了保留 token ID。\ndoc_id：{doc_id}\n保留 ID：{sorted(accidental_ids)}")
+        raise RuntimeError(
+            f"普通正文产生了保留 token ID。\ndoc_id：{doc_id}\n保留 ID：{sorted(accidental_ids)}"
+        )
 
-def encode_regular_batch(records: list[PreparedRecord], raw_tokenizer: Tokenizer, writers: dict[str, ShardWriter], eot_id: int, reserved_ids: set[int], source_state: dict[str, Any]) -> int:
+
+def encode_regular_batch(
+    records: list[PreparedRecord],
+    raw_tokenizer: Tokenizer,
+    writers: dict[str, ShardWriter],
+    eot_id: int,
+    reserved_ids: set[int],
+    source_state: dict[str, Any],
+) -> int:
     if not records:
         return 0
-    encodings = raw_tokenizer.encode_batch([record.text for record in records], add_special_tokens=False)
+    encodings = raw_tokenizer.encode_batch(
+        [record.text for record in records], add_special_tokens=False
+    )
     if len(encodings) != len(records):
         raise RuntimeError("encode_batch 返回数量异常")
     processed_bytes = 0
@@ -492,7 +625,15 @@ def encode_regular_batch(records: list[PreparedRecord], raw_tokenizer: Tokenizer
         processed_bytes += record.utf8_bytes
     return processed_bytes
 
-def encode_long_document(record: PreparedRecord, raw_tokenizer: Tokenizer, writers: dict[str, ShardWriter], eot_id: int, reserved_ids: set[int], source_state: dict[str, Any]) -> int:
+
+def encode_long_document(
+    record: PreparedRecord,
+    raw_tokenizer: Tokenizer,
+    writers: dict[str, ShardWriter],
+    eot_id: int,
+    reserved_ids: set[int],
+    source_state: dict[str, Any],
+) -> int:
     writer = writers[record.split]
     for chunk in iter_long_document_chunks(record.text):
         encoding = raw_tokenizer.encode(chunk, add_special_tokens=False)
@@ -503,6 +644,7 @@ def encode_long_document(record: PreparedRecord, raw_tokenizer: Tokenizer, write
     source_state["processed_utf8_bytes"] += record.utf8_bytes
     source_state["cursor"] = record.next_cursor
     return record.utf8_bytes
+
 
 class CheckpointCommitter:
     def __init__(self, checkpoint: dict[str, Any]) -> None:
@@ -519,7 +661,13 @@ class CheckpointCommitter:
         elapsed = time.monotonic() - self.last_commit_time
         return elapsed >= CHECKPOINT_EVERY_SECONDS
 
-    def commit(self, writers: dict[str, ShardWriter], *, force: bool = False, progress_label: str | None = None) -> None:
+    def commit(
+        self,
+        writers: dict[str, ShardWriter],
+        *,
+        force: bool = False,
+        progress_label: str | None = None,
+    ) -> None:
         if not force and not self.should_commit():
             return
         for writer in writers.values():
@@ -532,7 +680,14 @@ class CheckpointCommitter:
         self.bytes_since_commit = 0
         self.last_commit_time = time.monotonic()
 
-def process_source(source: SourceConfig, checkpoint: dict[str, Any], raw_tokenizer: Tokenizer, vocab_size: int, special_token_ids: dict[str, int]) -> None:
+
+def process_source(
+    source: SourceConfig,
+    checkpoint: dict[str, Any],
+    raw_tokenizer: Tokenizer,
+    vocab_size: int,
+    special_token_ids: dict[str, int],
+) -> None:
     source_state = checkpoint["sources"][source.name]
     if source_state["completed"]:
         print(f"{source.name} 已完成，跳过。")
@@ -543,7 +698,15 @@ def process_source(source: SourceConfig, checkpoint: dict[str, Any], raw_tokeniz
     configured_relative_files = [entry["path"] for entry in configured_files]
     if current_relative_files != configured_relative_files:
         raise RuntimeError(f"{source.name} 输入文件顺序发生变化")
-    writers = {split: ShardWriter(source_name=source.name, split=split, state=source_state["writers"][split], vocab_size=vocab_size) for split in ("train", "validation")}
+    writers = {
+        split: ShardWriter(
+            source_name=source.name,
+            split=split,
+            state=source_state["writers"][split],
+            vocab_size=vocab_size,
+        )
+        for split in ("train", "validation")
+    }
     eot_id = special_token_ids["<|endoftext|>"]
     reserved_ids = set(special_token_ids.values())
     committer = CheckpointCommitter(checkpoint)
@@ -575,8 +738,13 @@ def process_source(source: SourceConfig, checkpoint: dict[str, Any], raw_tokeniz
             nonlocal pending_utf8_bytes
             if not pending_records:
                 return
-            processed_bytes = (
-                encode_regular_batch(records=pending_records, raw_tokenizer=raw_tokenizer, writers=writers, eot_id=eot_id, reserved_ids=reserved_ids, source_state=source_state)
+            processed_bytes = encode_regular_batch(
+                records=pending_records,
+                raw_tokenizer=raw_tokenizer,
+                writers=writers,
+                eot_id=eot_id,
+                reserved_ids=reserved_ids,
+                source_state=source_state,
             )
             committer.add_processed_bytes(processed_bytes)
             pending_records = []
@@ -590,13 +758,21 @@ def process_source(source: SourceConfig, checkpoint: dict[str, Any], raw_tokeniz
                     f"{train_tokens + validation_tokens:,} tokens"
                 )
                 committer.commit(writers, progress_label=progress)
+
         records = iter_input_file_records(source, file_path, cursor)
         for input_record in records:
             record = prepare_record(input_record)
             is_long_document = record.utf8_bytes >= LONG_DOCUMENT_UTF8_BYTES
             if is_long_document:
                 flush_pending()
-                processed_bytes = (encode_long_document(record=record, raw_tokenizer=raw_tokenizer, writers=writers, eot_id=eot_id, reserved_ids=reserved_ids, source_state=source_state))
+                processed_bytes = encode_long_document(
+                    record=record,
+                    raw_tokenizer=raw_tokenizer,
+                    writers=writers,
+                    eot_id=eot_id,
+                    reserved_ids=reserved_ids,
+                    source_state=source_state,
+                )
                 committer.add_processed_bytes(processed_bytes)
                 if committer.should_commit():
                     train_tokens = source_state["writers"]["train"]["total_tokens"]
@@ -609,17 +785,24 @@ def process_source(source: SourceConfig, checkpoint: dict[str, Any], raw_tokeniz
                     committer.commit(writers, progress_label=progress)
                 continue
             would_exceed_documents = len(pending_records) >= MAX_BATCH_DOCUMENTS
-            would_exceed_bytes = pending_records and pending_utf8_bytes + record.utf8_bytes > MAX_BATCH_UTF8_BYTES
+            would_exceed_bytes = (
+                pending_records and pending_utf8_bytes + record.utf8_bytes > MAX_BATCH_UTF8_BYTES
+            )
             if would_exceed_documents or would_exceed_bytes:
                 flush_pending()
             pending_records.append(record)
             pending_utf8_bytes += record.utf8_bytes
-            if len(pending_records) >= MAX_BATCH_DOCUMENTS or pending_utf8_bytes >= MAX_BATCH_UTF8_BYTES:
+            if (
+                len(pending_records) >= MAX_BATCH_DOCUMENTS
+                or pending_utf8_bytes >= MAX_BATCH_UTF8_BYTES
+            ):
                 flush_pending()
         flush_pending()
         source_state["input_file_index"] = file_index + 1
         source_state["cursor"] = initial_cursor(source)
-        progress = f"文件完成：{file_path.name}；来源累计文档：{source_state['processed_documents']:,}"
+        progress = (
+            f"文件完成：{file_path.name}；来源累计文档：{source_state['processed_documents']:,}"
+        )
         committer.commit(writers, force=True, progress_label=progress)
     for writer in writers.values():
         writer.finalize_tail()
@@ -630,7 +813,13 @@ def process_source(source: SourceConfig, checkpoint: dict[str, Any], raw_tokeniz
     for writer in writers.values():
         writer.close()
 
-def build_manifest(checkpoint: dict[str, Any], tokenizer_sha256: str, special_token_ids: dict[str, int], vocab_size: int) -> dict[str, Any]:
+
+def build_manifest(
+    checkpoint: dict[str, Any],
+    tokenizer_sha256: str,
+    special_token_ids: dict[str, int],
+    vocab_size: int,
+) -> dict[str, Any]:
     manifest_sources: dict[str, dict[str, Any]] = {}
     total_tokens = 0
     total_documents = 0
@@ -646,7 +835,11 @@ def build_manifest(checkpoint: dict[str, Any], tokenizer_sha256: str, special_to
             writer_state = state["writers"][split]
             if writer_state["tokens_in_partial"] != 0:
                 raise RuntimeError(f"{source.name}/{split} 仍有未完成 partial")
-            split_entry = {"tokens": writer_state["total_tokens"], "documents": writer_state["total_documents"], "shards": writer_state["completed_shards"]}
+            split_entry = {
+                "tokens": writer_state["total_tokens"],
+                "documents": writer_state["total_documents"],
+                "shards": writer_state["completed_shards"],
+            }
             source_entry["splits"][split] = split_entry
             total_tokens += writer_state["total_tokens"]
             total_documents += writer_state["total_documents"]
@@ -654,7 +847,12 @@ def build_manifest(checkpoint: dict[str, Any], tokenizer_sha256: str, special_to
     return {
         "format_version": FORMAT_VERSION,
         "created_at": now_iso(),
-        "tokenizer": {"path": relative_to_project(TOKENIZER_PATH), "sha256": tokenizer_sha256, "vocab_size": vocab_size, "special_token_ids": special_token_ids},
+        "tokenizer": {
+            "path": relative_to_project(TOKENIZER_PATH),
+            "sha256": tokenizer_sha256,
+            "vocab_size": vocab_size,
+            "special_token_ids": special_token_ids,
+        },
         "storage": {
             "dtype": "uint16",
             "numpy_dtype": TOKEN_DTYPE.str,
@@ -669,16 +867,33 @@ def build_manifest(checkpoint: dict[str, Any], tokenizer_sha256: str, special_to
             "validation_threshold": VALIDATION_THRESHOLD,
             "validation_ratio": VALIDATION_THRESHOLD / VALIDATION_BUCKETS,
         },
-        "normalization": {"crlf_to_lf": True, "cr_to_lf": True, "remove_null_bytes": True, "unicode_normalization": None},
+        "normalization": {
+            "crlf_to_lf": True,
+            "cr_to_lf": True,
+            "remove_null_bytes": True,
+            "unicode_normalization": None,
+        },
         "raw_special_token_policy": "added_tokens removed while encoding ordinary source text",
         "recommended_training_mixture": RECOMMENDED_TRAINING_MIXTURE,
-        "totals": {"tokens": total_tokens, "documents": total_documents, "binary_bytes": total_tokens * TOKEN_BYTES},
+        "totals": {
+            "tokens": total_tokens,
+            "documents": total_documents,
+            "binary_bytes": total_tokens * TOKEN_BYTES,
+        },
         "sources": manifest_sources,
         "input_files": checkpoint["runtime_config"]["source_files"],
         "config_fingerprint": checkpoint["config_fingerprint"],
     }
 
-def scan_and_verify_shard(path: Path, expected_sha256: str, expected_tokens: int, expected_documents: int, vocab_size: int, eot_id: int) -> None:
+
+def scan_and_verify_shard(
+    path: Path,
+    expected_sha256: str,
+    expected_tokens: int,
+    expected_documents: int,
+    vocab_size: int,
+    eot_id: int,
+) -> None:
     expected_bytes = expected_tokens * TOKEN_BYTES
     actual_bytes = path.stat().st_size
     if actual_bytes != expected_bytes:
@@ -710,7 +925,10 @@ def scan_and_verify_shard(path: Path, expected_sha256: str, expected_tokens: int
     if maximum_token_id >= vocab_size:
         raise RuntimeError(f"发现越界 token ID：{path}\n{maximum_token_id} >= {vocab_size}")
     if eot_count != expected_documents:
-        raise RuntimeError(f"EOT 数量与文档数不一致：{path}\nEOT：{eot_count}\n文档：{expected_documents}")
+        raise RuntimeError(
+            f"EOT 数量与文档数不一致：{path}\nEOT：{eot_count}\n文档：{expected_documents}"
+        )
+
 
 def verify_dataset() -> None:
     if not MANIFEST_PATH.exists():
@@ -772,11 +990,15 @@ def verify_dataset() -> None:
     print(f"Token 数：{verified_tokens:,}")
     print(f"二进制数据大小：{format_bytes(verified_tokens * TOKEN_BYTES)}")
 
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="将 XiangLM 全量预训练数据编码为 uint16 token shards")
+    parser = argparse.ArgumentParser(
+        description="将 XiangLM 全量预训练数据编码为 uint16 token shards"
+    )
     parser.add_argument("--verify-only", action="store_true", help="只验证已经生成的数据")
     parser.add_argument("--no-verify", action="store_true", help="编码完成后暂时跳过全量读取验证")
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -786,7 +1008,9 @@ def main() -> None:
     print(f"项目目录：{PROJECT_ROOT}")
     print(f"Tokenizer：{TOKENIZER_PATH}")
     print(f"输出目录：{OUTPUT_ROOT}")
-    print(f"分片大小：{SHARD_SIZE_TOKENS:,} tokens，{format_bytes(SHARD_SIZE_TOKENS * TOKEN_BYTES)}")
+    print(
+        f"分片大小：{SHARD_SIZE_TOKENS:,} tokens，{format_bytes(SHARD_SIZE_TOKENS * TOKEN_BYTES)}"
+    )
     print("验证集比例：{VALIDATION_THRESHOLD / VALIDATION_BUCKETS:.2%}")
     if args.verify_only:
         verify_dataset()
@@ -806,8 +1030,19 @@ def main() -> None:
             verify_dataset()
         return
     for source in SOURCES:
-        process_source(source=source, checkpoint=checkpoint, raw_tokenizer=raw_tokenizer, vocab_size=vocab_size, special_token_ids=special_token_ids)
-    manifest = build_manifest(checkpoint=checkpoint, tokenizer_sha256=tokenizer_sha256, special_token_ids=special_token_ids, vocab_size=vocab_size)
+        process_source(
+            source=source,
+            checkpoint=checkpoint,
+            raw_tokenizer=raw_tokenizer,
+            vocab_size=vocab_size,
+            special_token_ids=special_token_ids,
+        )
+    manifest = build_manifest(
+        checkpoint=checkpoint,
+        tokenizer_sha256=tokenizer_sha256,
+        special_token_ids=special_token_ids,
+        vocab_size=vocab_size,
+    )
     atomic_write_json(MANIFEST_PATH, manifest)
     checkpoint["status"] = "complete"
     checkpoint["completed_at"] = now_iso()
@@ -826,6 +1061,7 @@ def main() -> None:
     else:
         print("已按照 --no-verify 跳过完整验证。")
         print("稍后可以运行：py -u -m src.tokenize_data --verify-only")
+
 
 if __name__ == "__main__":
     main()

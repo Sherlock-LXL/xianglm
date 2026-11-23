@@ -16,6 +16,7 @@ DEFAULT_CHECKPOINT_PATHS = (SFT_BEST_CHECKPOINT_PATH, SFT_LATEST_CHECKPOINT_PATH
 EXPECTED_STAGE = "sft"
 SFT_LABEL = "SFT"
 
+
 def resolve_checkpoint(requested: str | None) -> Path:
     if requested is not None:
         path = Path(requested).expanduser().resolve()
@@ -26,6 +27,7 @@ def resolve_checkpoint(requested: str | None) -> Path:
         if path.exists():
             return path
     raise FileNotFoundError(f"没有找到{SFT_LABEL} checkpoint")
+
 
 def load_sft_model(path: Path, device: torch.device) -> tuple[TransformerLM, dict[str, int]]:
     experiment = get_experiment_config(require_data_manifest=False)
@@ -42,7 +44,9 @@ def load_sft_model(path: Path, device: torch.device) -> tuple[TransformerLM, dic
     metadata = {
         "sft_step": int(checkpoint.get("sft_step", checkpoint.get("step", 0))),
         "sft_examples": int(checkpoint.get("sft_examples_processed", 0)),
-        "sft_supervised_tokens": int(checkpoint.get("sft_supervised_tokens_processed", checkpoint.get("tokens_processed", 0))),
+        "sft_supervised_tokens": int(
+            checkpoint.get("sft_supervised_tokens_processed", checkpoint.get("tokens_processed", 0))
+        ),
         "base_step": int(checkpoint.get("base_step", 0)),
         "base_tokens": int(checkpoint.get("base_tokens_processed", 0)),
     }
@@ -52,14 +56,21 @@ def load_sft_model(path: Path, device: torch.device) -> tuple[TransformerLM, dic
     model.eval()
     return model, metadata
 
-def build_prompt_ids(question: str, raw_tokenizer: Tokenizer, special_ids: dict[str, int], context_length: int) -> list[int]:
+
+def build_prompt_ids(
+    question: str, raw_tokenizer: Tokenizer, special_ids: dict[str, int], context_length: int
+) -> list[int]:
     question = question.strip()
     if not question:
         raise ValueError("问题不能为空")
     reserved_ids = set(special_ids.values())
-    user_prefix = [special_ids["<|bos|>"], special_ids["<|im_start|>"]] + encode_text(raw_tokenizer, "user\n", reserved_ids)
+    user_prefix = [special_ids["<|bos|>"], special_ids["<|im_start|>"]] + encode_text(
+        raw_tokenizer, "user\n", reserved_ids
+    )
     user_suffix = [special_ids["<|im_end|>"]] + encode_text(raw_tokenizer, "\n", reserved_ids)
-    assistant_prefix = [special_ids["<|im_start|>"]] + encode_text(raw_tokenizer, "assistant\n", reserved_ids)
+    assistant_prefix = [special_ids["<|im_start|>"]] + encode_text(
+        raw_tokenizer, "assistant\n", reserved_ids
+    )
     fixed_ids = user_prefix + user_suffix + assistant_prefix
     question_budget = context_length - len(fixed_ids)
     if question_budget <= 0:
@@ -68,6 +79,7 @@ def build_prompt_ids(question: str, raw_tokenizer: Tokenizer, special_ids: dict[
     separator_ids = encode_text(raw_tokenizer, "\n[…]\n", reserved_ids)
     question_ids = truncate_middle(question_ids, question_budget, separator_ids)
     return user_prefix + question_ids + user_suffix + assistant_prefix
+
 
 @torch.no_grad()
 def generate_answer(
@@ -89,9 +101,14 @@ def generate_answer(
     prompt_ids = build_prompt_ids(question, raw_tokenizer, special_ids, model.config.context_length)
     all_ids = list(prompt_ids)
     answer_ids: list[int] = []
-    stop_ids = {special_ids["<|im_end|>"], special_ids["<|im_start|>"], special_ids["<|eos|>"], special_ids["<|endoftext|>"]}
+    stop_ids = {
+        special_ids["<|im_end|>"],
+        special_ids["<|im_start|>"],
+        special_ids["<|eos|>"],
+        special_ids["<|endoftext|>"],
+    }
     for _ in range(max_new_tokens):
-        context_ids = all_ids[-model.config.context_length:]
+        context_ids = all_ids[-model.config.context_length :]
         input_ids = torch.tensor([context_ids], dtype=torch.long, device=device)
         with autocast_context(device, precision):
             output = model(input_ids=input_ids)
@@ -105,6 +122,7 @@ def generate_answer(
         all_ids.append(next_token)
     answer = control_tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
     return answer if answer else "[模型立即结束了回答]"
+
 
 def ask_once(
     *,
@@ -132,6 +150,7 @@ def ask_once(
         repetition_penalty=args.repetition_penalty,
         repetition_window=args.repetition_window,
     )
+
 
 def interactive_loop(
     *,
@@ -166,6 +185,7 @@ def interactive_loop(
         )
         print(f"XiangLM：{answer}")
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"直接测试XiangLM {SFT_LABEL}模型")
     parser.add_argument("--prompt", default=None, help="单轮问题；省略后进入交互模式")
@@ -177,8 +197,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repetition-penalty", type=float, default=1.10)
     parser.add_argument("--repetition-window", type=int, default=128)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     return parser.parse_args()
+
 
 def validate_args(args: argparse.Namespace) -> None:
     if args.max_new_tokens <= 0:
@@ -189,6 +212,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--top-p必须位于(0, 1]")
     if args.repetition_penalty < 1:
         raise ValueError("--repetition-penalty不能小于1")
+
 
 def main() -> None:
     args = parse_args()
@@ -231,6 +255,7 @@ def main() -> None:
         precision=experiment.train.precision,
     )
     print(answer)
+
 
 if __name__ == "__main__":
     main()

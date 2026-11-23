@@ -9,11 +9,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.config import ExperimentConfig, PRETRAIN_BEST_CHECKPOINT_PATH, PRETRAIN_LATEST_CHECKPOINT_PATH
+from src.config import (
+    ExperimentConfig,
+    PRETRAIN_BEST_CHECKPOINT_PATH,
+    PRETRAIN_LATEST_CHECKPOINT_PATH,
+)
 from src.data_loader import MixedPretrainingLoader
 
 LATEST_CHECKPOINT_NAME = PRETRAIN_LATEST_CHECKPOINT_PATH.name
 BEST_CHECKPOINT_NAME = PRETRAIN_BEST_CHECKPOINT_PATH.name
+
 
 @dataclass(frozen=True)
 class TrainingState:
@@ -21,11 +26,18 @@ class TrainingState:
     tokens_processed: int
     best_validation_loss: float
 
+
 def capture_rng_state() -> dict[str, Any]:
-    state: dict[str, Any] = {"python": random.getstate(), "numpy": np.random.get_state(), "torch_cpu": torch.get_rng_state(), "torch_cuda": None}
+    state: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch_cpu": torch.get_rng_state(),
+        "torch_cuda": None,
+    }
     if torch.cuda.is_available():
         state["torch_cuda"] = torch.cuda.get_rng_state_all()
     return state
+
 
 def restore_rng_state(state: dict[str, Any]) -> None:
     random.setstate(state["python"])
@@ -41,8 +53,11 @@ def restore_rng_state(state: dict[str, Any]) -> None:
         for generator_state in cuda_state:
             if not isinstance(generator_state, torch.Tensor):
                 raise TypeError("CUDA RNG state必须是Tensor")
-            normalized_cuda_state.append(generator_state.detach().to(device="cpu", dtype=torch.uint8).contiguous())
+            normalized_cuda_state.append(
+                generator_state.detach().to(device="cpu", dtype=torch.uint8).contiguous()
+            )
         torch.cuda.set_rng_state_all(normalized_cuda_state)
+
 
 def atomic_torch_save(payload: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,12 +67,14 @@ def atomic_torch_save(payload: dict[str, Any], path: Path) -> None:
     torch.save(payload, temporary_path)
     os.replace(temporary_path, path)
 
+
 def copy_checkpoint_atomic(source: Path, destination: Path) -> None:
     temporary_path = destination.with_suffix(destination.suffix + ".tmp")
     if temporary_path.exists():
         temporary_path.unlink()
     shutil.copy2(source, temporary_path)
     os.replace(temporary_path, destination)
+
 
 def save_training_checkpoint(
     *,
@@ -92,6 +109,7 @@ def save_training_checkpoint(
         copy_checkpoint_atomic(latest_path, best_path)
     return latest_path
 
+
 def load_training_checkpoint(
     *,
     path: Path,
@@ -113,15 +131,23 @@ def load_training_checkpoint(
         scaler.load_state_dict(scaler_state)
     train_loader.load_state_dict(checkpoint["train_loader"])
     restore_rng_state(checkpoint["rng_state"])
-    return TrainingState(step=int(checkpoint["step"]), tokens_processed=int(checkpoint["tokens_processed"]), best_validation_loss=float(checkpoint["best_validation_loss"]))
+    return TrainingState(
+        step=int(checkpoint["step"]),
+        tokens_processed=int(checkpoint["tokens_processed"]),
+        best_validation_loss=float(checkpoint["best_validation_loss"]),
+    )
 
-def load_model_checkpoint(*, path: Path, model: nn.Module, expected_experiment_name: str, map_location: torch.device | str) -> dict[str, Any]:
+
+def load_model_checkpoint(
+    *, path: Path, model: nn.Module, expected_experiment_name: str, map_location: torch.device | str
+) -> dict[str, Any]:
     checkpoint = torch.load(path, map_location=map_location, weights_only=False)
     actual_name = checkpoint["experiment_name"]
     if actual_name != expected_experiment_name:
         raise RuntimeError(f"Checkpoint配置不匹配：{actual_name} != {expected_experiment_name}")
     model.load_state_dict(checkpoint["model"], strict=True)
     return checkpoint
+
 
 def latest_checkpoint_path(directory: Path) -> Path | None:
     path = directory / LATEST_CHECKPOINT_NAME
